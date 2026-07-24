@@ -159,7 +159,8 @@ ps aux --sort=-%cpu | head -10
 To abort an in-progress evaluation:
 ```
 pkill -9 -f "uvicorn backend.main:app"
-./venv/bin/uvicorn backend.main:app --reload
+./venv/bin/uvicorn backend.main:app --reload --host 0.0.0.0
+
 ```
 Killing the backend stops it from continuing; Ollama itself may stay busy for another 30-90 seconds finishing whatever single request was already in flight before it notices the connection is gone — that's normal, not stuck.
 

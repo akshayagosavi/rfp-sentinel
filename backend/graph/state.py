@@ -14,5 +14,8 @@ class EvaluationState(TypedDict):
     rfp_id: str
     pdf_path: str
     structured_rfp: dict | None  # StructuredRFP.model_dump() -- see module docstring
-    status: Literal["extracting", "checking_compliance", "awaiting_checkpoint_a", "approved"]
+    status: Literal[
+        "extracting", "checking_compliance", "checking_prohibited_practices",
+        "awaiting_checkpoint_a", "approved",
+    ]
     max_criteria: int | None  # testing-only cap on how many criteria to process; None = no limit

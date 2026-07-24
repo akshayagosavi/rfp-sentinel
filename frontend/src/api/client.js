@@ -1,7 +1,12 @@
 import axios from 'axios'
 
+// Resolves against whatever host the browser used to load the page (e.g.
+// localhost for you, your LAN IP for a teammate), instead of a hardcoded
+// 127.0.0.1 -- which only ever means "this same machine," not yours.
+const BASE_URL = `http://${window.location.hostname}:8000`
+
 const client = axios.create({
-  baseURL: 'http://127.0.0.1:8000',
+  baseURL: BASE_URL,
 })
 
 // v1: token lives in localStorage -- simplest option for a single-machine,
@@ -19,7 +24,17 @@ client.interceptors.request.use((config) => {
 
 export async function login(email, password) {
   const { data } = await client.post('/auth/login', { email, password })
-  return data.access_token
+  return { accessToken: data.access_token, role: data.role }
+}
+
+export async function getBidderRfps() {
+  const { data } = await client.get('/bidder/rfps')
+  return data.rfps
+}
+
+export async function getBidderRfpDetail(rfpId) {
+  const { data } = await client.get(`/bidder/rfps/${rfpId}`)
+  return data
 }
 
 export async function uploadRfp(file) {

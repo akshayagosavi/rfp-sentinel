@@ -1,6 +1,7 @@
 """
-M13 (partial): wires extract_rfp_criteria -> check_rfp_compliance -> checkpoint_a
-into a LangGraph graph with Postgres-backed interrupt/resume.
+M13 (partial): wires extract_rfp_criteria -> check_rfp_compliance ->
+check_prohibited_practices -> checkpoint_a into a LangGraph graph with
+Postgres-backed interrupt/resume.
 
 Deliberately partial, scoped under time pressure to get RFP upload through
 Checkpoint A working end-to-end today. Bid evaluation (ingest_bids onward,
@@ -16,6 +17,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 from psycopg_pool import ConnectionPool
 
+from backend.graph.check_prohibited_practices import check_prohibited_practices
 from backend.graph.check_rfp_compliance import check_rfp_compliance
 from backend.graph.extract_rfp_criteria import extract_rfp_criteria
 from backend.graph.state import EvaluationState
@@ -39,6 +41,12 @@ def _extract_node(state: EvaluationState) -> dict:
 def _compliance_node(state: EvaluationState) -> dict:
     rfp = StructuredRFP.model_validate(state["structured_rfp"])
     rfp = check_rfp_compliance(rfp)
+    return {"structured_rfp": rfp.model_dump(), "status": "checking_prohibited_practices"}
+
+
+def _prohibited_practices_node(state: EvaluationState) -> dict:
+    rfp = StructuredRFP.model_validate(state["structured_rfp"])
+    rfp = check_prohibited_practices(rfp)
     return {"structured_rfp": rfp.model_dump(), "status": "awaiting_checkpoint_a"}
 
 
@@ -56,11 +64,13 @@ def build_graph(checkpointer):
     graph = StateGraph(EvaluationState)
     graph.add_node("extract_rfp_criteria", _extract_node)
     graph.add_node("check_rfp_compliance", _compliance_node)
+    graph.add_node("check_prohibited_practices", _prohibited_practices_node)
     graph.add_node("checkpoint_a", _checkpoint_a_node)
 
     graph.set_entry_point("extract_rfp_criteria")
     graph.add_edge("extract_rfp_criteria", "check_rfp_compliance")
-    graph.add_edge("check_rfp_compliance", "checkpoint_a")
+    graph.add_edge("check_rfp_compliance", "check_prohibited_practices")
+    graph.add_edge("check_prohibited_practices", "checkpoint_a")
     graph.add_edge("checkpoint_a", END)
 
     return graph.compile(checkpointer=checkpointer)

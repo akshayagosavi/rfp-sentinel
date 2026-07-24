@@ -7,6 +7,7 @@ re-processing its PDF.
 import os
 import sys
 import uuid
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
@@ -26,6 +27,7 @@ load_dotenv()
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 NORMS_COLLECTION = "norms"
+BIDS_COLLECTION = "bids"
 VECTOR_SIZE = 768
 
 # Fixed namespace so the same doc_id + chunk_index always produces the same
@@ -101,6 +103,124 @@ def search_active(client: QdrantClient, query_vector: list[float], top_k: int = 
         query_filter=Filter(must=[FieldCondition(key="status", match=MatchValue(value="active"))]),
         limit=top_k,
     ).points
+
+
+# --- Bids: one bidder's submission (multiple PDFs) -> Qdrant, isolated by
+# bid_id. Same pattern as the norms collection above (deterministic IDs,
+# status field), just pointed at bid documents instead of government rules.
+
+
+def ensure_bids_collection(client: QdrantClient) -> None:
+    if not client.collection_exists(BIDS_COLLECTION):
+        client.create_collection(
+            collection_name=BIDS_COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        )
+        client.create_payload_index(BIDS_COLLECTION, "bid_id", PayloadSchemaType.KEYWORD)
+        client.create_payload_index(BIDS_COLLECTION, "rfp_id", PayloadSchemaType.KEYWORD)
+        client.create_payload_index(BIDS_COLLECTION, "status", PayloadSchemaType.KEYWORD)
+        client.create_payload_index(BIDS_COLLECTION, "packet", PayloadSchemaType.KEYWORD)
+
+
+def bid_chunk_point_id(bid_id: str, source_file: str, chunk_index: int) -> str:
+    """Deterministic, like chunk_point_id() -- includes source_file since a
+    single bid_id spans multiple documents, so chunk_index alone isn't
+    unique across them."""
+    return str(uuid.uuid5(_ID_NAMESPACE, f"{bid_id}:{source_file}:{chunk_index}"))
+
+
+def upsert_bid_chunks(
+    client: QdrantClient,
+    bid_id: str,
+    rfp_id: str,
+    bidder_name: str,
+    source_file: str,
+    packet: str,
+    chunks: list[Chunk],
+    vectors: list[list[float]],
+) -> None:
+    """packet is "I" (technical) or "II" (financial) -- required, not
+    optional, since this is the field the GFR Rule 189 seal depends on. See
+    search_bid() for how it's enforced at read time."""
+    if packet not in ("I", "II"):
+        raise ValueError(f"packet must be 'I' or 'II', got {packet!r}")
+    points = [
+        PointStruct(
+            id=bid_chunk_point_id(bid_id, source_file, i),
+            vector=vector,
+            payload={
+                "bid_id": bid_id,
+                "rfp_id": rfp_id,
+                "bidder_name": bidder_name,
+                "source_file": source_file,
+                "packet": packet,
+                "chunk_type": chunk.chunk_type,
+                "page_number": chunk.page_number,
+                "clause_ref": chunk.clause_ref,
+                "text": chunk.text,
+                "status": "active",
+                "closed_at": None,
+            },
+        )
+        for i, (chunk, vector) in enumerate(zip(chunks, vectors))
+    ]
+    client.upsert(collection_name=BIDS_COLLECTION, points=points)
+
+
+def search_bid(
+    client: QdrantClient, query_vector: list[float], bid_id: str, packet: str = "I", top_k: int = 5
+):
+    """Every search is filtered to one bid_id (isolation between bidders)
+    AND one packet (isolation between technical and financial content).
+    packet defaults to "I" deliberately -- GFR Rule 189 requires Packet-II
+    (pricing) to stay sealed until technical evaluation concludes, so the
+    safe behavior if a caller forgets to specify is to see technical
+    content only, never financial. Stage 2 (price ranking, once built)
+    will be the only caller that ever passes packet="II" explicitly.
+    A closed bid stays searchable too; status only controls the purge
+    script (see close_bid), not visibility."""
+    if packet not in ("I", "II"):
+        raise ValueError(f"packet must be 'I' or 'II', got {packet!r}")
+    return client.query_points(
+        collection_name=BIDS_COLLECTION,
+        query=query_vector,
+        query_filter=Filter(must=[
+            FieldCondition(key="bid_id", match=MatchValue(value=bid_id)),
+            FieldCondition(key="packet", match=MatchValue(value=packet)),
+        ]),
+        limit=top_k,
+    ).points
+
+
+def get_bid_source_files(client: QdrantClient, bid_id: str, packet: str = "I") -> list[str]:
+    """Distinct uploaded filenames for one bid's packet -- used for the
+    document-completeness check (did the bidder submit the right document
+    TYPES at all), a fast presence check that's separate from and earlier
+    than search_bid()'s per-criterion content matching."""
+    if packet not in ("I", "II"):
+        raise ValueError(f"packet must be 'I' or 'II', got {packet!r}")
+    points, _ = client.scroll(
+        collection_name=BIDS_COLLECTION,
+        scroll_filter=Filter(must=[
+            FieldCondition(key="bid_id", match=MatchValue(value=bid_id)),
+            FieldCondition(key="packet", match=MatchValue(value=packet)),
+        ]),
+        limit=1000,
+        with_payload=["source_file"],
+    )
+    return sorted({p.payload["source_file"] for p in points})
+
+
+def close_bid(client: QdrantClient, bid_id: str) -> None:
+    """Soft-delete: marks every chunk for this bid 'closed' with a timestamp,
+    once the bidding period ends and a winner is confirmed. A separate purge
+    script (not built yet) does the real deletion after the retention window
+    -- this just starts the clock."""
+    client.set_payload(
+        collection_name=BIDS_COLLECTION,
+        payload={"status": "closed", "closed_at": datetime.now(timezone.utc).isoformat()},
+        points=Filter(must=[FieldCondition(key="bid_id", match=MatchValue(value=bid_id))]),
+    )
 
 
 if __name__ == "__main__":

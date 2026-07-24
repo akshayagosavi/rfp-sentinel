@@ -9,16 +9,22 @@ one label given some reference text, and cite which reference it used" part.
 """
 import os
 import sys
+import time
 
 import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
+from backend.logging_config import get_logger
+
 load_dotenv()
+
+logger = get_logger(__name__)
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("OLLAMA_LLM_MODEL", "llama3.2:3b")
 MAX_RETRIES = 2
+_CONNECTION_RETRY_DELAY_SECONDS = 3  # only for network errors -- a bad JSON response needs no delay
 
 
 class ReferenceChunk(BaseModel):
@@ -72,37 +78,54 @@ def classify(
     prompt = _build_prompt(subject_text, references, verdict_options, instruction)
 
     last_error: Exception | None = None
-    for _ in range(MAX_RETRIES + 1):
-        resp = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": LLM_MODEL,
-                "prompt": prompt,
-                "format": "json",
-                "stream": False,
-                "options": {"temperature": 0},
-            },
-            timeout=150,
-        )
-        resp.raise_for_status()
+    for attempt in range(1, MAX_RETRIES + 2):
+        try:
+            resp = requests.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={
+                    "model": LLM_MODEL,
+                    "prompt": prompt,
+                    "format": "json",
+                    "stream": False,
+                    "options": {"temperature": 0},
+                },
+                timeout=150,
+            )
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            logger.warning(
+                "classify() attempt %d/%d: network error (%s) -- retrying in %ds",
+                attempt, MAX_RETRIES + 1, e, _CONNECTION_RETRY_DELAY_SECONDS,
+            )
+            time.sleep(_CONNECTION_RETRY_DELAY_SECONDS)
+            continue
+
         raw = resp.json()["response"]
 
         try:
             parsed = _RawResponse.model_validate_json(raw)
         except ValidationError as e:
             last_error = e
+            logger.warning("classify() attempt %d/%d: malformed JSON response (%s)", attempt, MAX_RETRIES + 1, e)
             continue
 
         if parsed.verdict not in verdict_options:
             last_error = ValueError(f"verdict {parsed.verdict!r} not in {verdict_options}")
+            logger.warning(
+                "classify() attempt %d/%d: verdict %r not in allowed options %s",
+                attempt, MAX_RETRIES + 1, parsed.verdict, verdict_options,
+            )
             continue
 
         citation = None
         if parsed.reference_index is not None and 0 <= parsed.reference_index < len(references):
             citation = references[parsed.reference_index].citation
 
+        logger.info("classify() succeeded on attempt %d/%d: verdict=%r", attempt, MAX_RETRIES + 1, parsed.verdict)
         return ClassificationResult(verdict=parsed.verdict, reasoning=parsed.reasoning, citation=citation)
 
+    logger.error("classify() failed after %d attempts: %s", MAX_RETRIES + 1, last_error)
     raise RuntimeError(f"Classification failed after {MAX_RETRIES + 1} attempts: {last_error}")
 
 

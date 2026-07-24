@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg_pool import ConnectionPool
 
-from backend.auth import get_current_buyer
+from backend.auth import get_current_bidder, get_current_buyer
 from backend.graph.build_graph import build_graph
 
 load_dotenv()
@@ -42,7 +42,11 @@ app = FastAPI(title="RFP Sentinel", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    # Matches the frontend dev server on any host (localhost, 127.0.0.1, or a
+    # LAN IP for a teammate on the same network), not just localhost --
+    # needed alongside vite.config.js's server.host and the dynamic API base
+    # URL in frontend/src/api/client.js for cross-machine access to work.
+    allow_origin_regex=r"http://.*:5173",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,7 +59,9 @@ def health():
 
 
 from backend.api.auth import router as auth_router  # noqa: E402
+from backend.api.bidder import router as bidder_router  # noqa: E402
 from backend.api.rfp import router as rfp_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(rfp_router, dependencies=[Depends(get_current_buyer)])
+app.include_router(bidder_router, dependencies=[Depends(get_current_bidder)])

@@ -44,6 +44,7 @@ export default function BuyerDashboard() {
   const [phase, setPhase] = useState('idle')
   const [rfpId, setRfpId] = useState(null)
   const [record, setRecord] = useState(null)
+  const [allCriteria, setAllCriteria] = useState([])
   const [flaggedCriteria, setFlaggedCriteria] = useState([])
   const [errorMessage, setErrorMessage] = useState('')
   const [startedAt, setStartedAt] = useState(null)
@@ -59,7 +60,8 @@ export default function BuyerDashboard() {
 
   async function resolveOutcome(id, status) {
     const { criteria } = await getCriteria(id)
-    const flagged = criteria.filter((c) => c.compliance_issue)
+    setAllCriteria(criteria)
+    const flagged = criteria.filter((c) => c.compliance_issue || c.prohibited_practice_issue)
 
     if (flagged.length > 0) {
       setFlaggedCriteria(flagged)
@@ -74,10 +76,25 @@ export default function BuyerDashboard() {
     setPhase('success')
   }
 
+  // A human reviewed the flagged criteria, disagreed with (some of) them, and
+  // chose to publish anyway -- their reasoning is stored per criterion as a
+  // real audit trail, not silently discarded. Requires reasoning for every
+  // currently-flagged criterion (enforced in EvaluationResult) before this
+  // can be called, so nothing gets published with an unaddressed flag.
+  async function publishWithOverrides(reasoningById) {
+    const merged = allCriteria.map((c) =>
+      reasoningById[c.id] ? { ...c, override_reasoning: reasoningById[c.id] } : c
+    )
+    await approveCriteria(rfpId, merged)
+    localStorage.removeItem(ACTIVE_EVALUATION_KEY)
+    setRecord({ rfpId, criteriaCount: merged.length, overriddenCount: Object.keys(reasoningById).length })
+    setPhase('success')
+  }
+
   async function pollUntilReady(id) {
     try {
       const { status } = await getStatus(id)
-      if (status === 'extracting' || status === 'checking_compliance') {
+      if (status === 'extracting' || status === 'checking_compliance' || status === 'checking_prohibited_practices') {
         setPhase('evaluating')
         pollTimer.current = setTimeout(() => pollUntilReady(id), POLL_INTERVAL_MS)
         return
@@ -140,6 +157,7 @@ export default function BuyerDashboard() {
     setPhase('idle')
     setRfpId(null)
     setRecord(null)
+    setAllCriteria([])
     setFlaggedCriteria([])
     setErrorMessage('')
     setStartedAt(null)
@@ -186,6 +204,7 @@ export default function BuyerDashboard() {
                 errorMessage={errorMessage}
                 elapsedLabel={startedAt ? formatElapsed(elapsedSeconds) : null}
                 onReset={reset}
+                onPublishWithOverrides={publishWithOverrides}
               />
             )}
           </div>

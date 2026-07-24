@@ -24,12 +24,12 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ingestion.extract_text import PageText, extract_text_by_page
+from ingestion.extract_text import PageText, _looks_doubled, extract_text_by_page
 from ingestion.extract_tables import PageTable, extract_tables_by_page
 
-TARGET_WORDS = 550       # sub-split window size for oversized sections
-MAX_SECTION_WORDS = 800  # sections up to this size stay as a single chunk
-OVERLAP_WORDS = 80       # ~15%, applied only within a single oversized section
+TARGET_WORDS = 1200      # sub-split window size for oversized sections
+MAX_SECTION_WORDS = 1500  # sections up to this size stay as a single chunk
+OVERLAP_WORDS = 180      # ~15%, applied only within a single oversized section
 
 HEADING_PATTERN = re.compile(
     r"^\s*(Rule\s+\d+[A-Za-z]?\b|Clause\s+\d+(?:\.\d+)*\b|Section\s+\d+\b|"
@@ -182,25 +182,37 @@ def _serialize_table(rows: list[list[str | None]]) -> str:
 
 
 def chunk_tables(tables: list[PageTable], max_rows: int = 20) -> list[Chunk]:
+    """Skips (doesn't attempt to fix) tables whose extracted text shows the
+    "fake bold" doubling artifact (see extract_text.py's _looks_doubled).
+    pdfplumber's extract_tables() has no use_text_flow-equivalent escape
+    hatch the way extract_text() does, and a naive "collapse consecutive
+    duplicate characters" fix is provably lossy on text with genuine double
+    letters (e.g. "Commerce" -> doubled "CCoommmmeerrccee" -> naive collapse
+    -> "Comerce", one 'm' short) -- there's no safe automatic fix, so the
+    honest choice is to drop the table and say so, not silently store
+    garbled duplicated text as if it were real content."""
     chunks = []
+    dropped = 0
     for table in tables:
         if not table.rows:
             continue
         if len(table.rows) <= max_rows:
-            chunks.append(Chunk(
-                text=_serialize_table(table.rows),
-                chunk_type="table",
-                page_number=table.page_number,
-            ))
+            text = _serialize_table(table.rows)
+            if _looks_doubled(text):
+                dropped += 1
+                continue
+            chunks.append(Chunk(text=text, chunk_type="table", page_number=table.page_number))
         else:
             header = table.rows[0]
             for i in range(1, len(table.rows), max_rows):
                 group = [header] + table.rows[i:i + max_rows]
-                chunks.append(Chunk(
-                    text=_serialize_table(group),
-                    chunk_type="table",
-                    page_number=table.page_number,
-                ))
+                text = _serialize_table(group)
+                if _looks_doubled(text):
+                    dropped += 1
+                    continue
+                chunks.append(Chunk(text=text, chunk_type="table", page_number=table.page_number))
+    if dropped:
+        print(f"chunk_tables: dropped {dropped} table chunk(s) with unfixable doubled-text rendering")
     return chunks
 
 

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.auth import authenticate_buyer, create_access_token
+from backend.auth import authenticate, create_access_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -14,7 +14,8 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 def login(body: LoginRequest):
-    if not authenticate_buyer(body.email, body.password):
+    role = authenticate(body.email, body.password)
+    if role is None:
         raise HTTPException(401, "Invalid email or password")
-    token = create_access_token(body.email)
-    return {"access_token": token, "token_type": "bearer"}
+    token = create_access_token(body.email, role)
+    return {"access_token": token, "token_type": "bearer", "role": role}

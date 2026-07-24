@@ -2,19 +2,23 @@
 M9: check_rfp_compliance() -- for every extracted criterion, decide whether
 it conflicts with government norms, before the buyer sees the RFP as final.
 
-Tries the deterministic threshold checker first (never wrong, for criteria
-that reduce to a number comparison); only falls back to the LLM classifier
-for genuinely qualitative judgment. See backend/scoring/threshold_check.py
-and backend/llm/ollama_client.py for why, and Current Progress in the plan
-for the M8 finding that made this two-tool design necessary.
+Classifies via the LLM (backend/llm/ollama_client.py). A deterministic
+regex-based threshold checker used to run first here, added at M8 because
+Llama 3.2 3B reliably got numeric threshold comparisons backwards; removed
+after switching to a larger remote model (qwen2.5:7b) that was confirmed,
+via a direct side-by-side rerun of the exact M8 test case, to get the same
+comparisons right without it.
 """
 import sys
 from pathlib import Path
 
 from backend.llm.ollama_client import ReferenceChunk, classify
+from backend.logging_config import get_logger
 from backend.models.rfp import Criterion, StructuredRFP
 from backend.rag.embeddings import embed_text
 from backend.rag.qdrant_client import get_client, search_active
+
+logger = get_logger(__name__)
 
 _VERDICT_OPTIONS = ["compliant", "violation", "unclear"]
 _INSTRUCTION = (
@@ -29,11 +33,15 @@ _INSTRUCTION = (
 
 def check_rfp_compliance(structured_rfp: StructuredRFP) -> StructuredRFP:
     client = get_client()
+    total = len(structured_rfp.criteria)
+    logger.info("check_rfp_compliance(rfp_id=%r) starting: %d criteria", structured_rfp.rfp_id, total)
 
-    for criterion in structured_rfp.criteria:
+    for n, criterion in enumerate(structured_rfp.criteria, start=1):
+        logger.info("criterion %d/%d (clause %s): searching norms", n, total, criterion.clause_ref)
         query_vector = embed_text(criterion.text)
-        matches = search_active(client, query_vector, top_k=2)  # kept small -- long prompts were timing out
+        matches = search_active(client, query_vector, top_k=5)
         if not matches:
+            logger.info("criterion %d/%d: no norm matches -- left unflagged", n, total)
             continue  # nothing relevant found -- leave unflagged, not a false violation
 
         references = [
@@ -48,24 +56,8 @@ def check_rfp_compliance(structured_rfp: StructuredRFP) -> StructuredRFP:
             for m in matches
         ]
 
-        # Try deterministic first -- only the top match, since threshold_check
-        # needs one rule text to compare against, not several candidates.
-        threshold_result = None
-        top_match = matches[0]
-        try:
-            from backend.scoring.threshold_check import check_percentage_threshold
-            threshold_result = check_percentage_threshold(top_match.payload["text"], criterion.text)
-        except ImportError:
-            pass
-
-        if threshold_result is not None:
-            if threshold_result.verdict == "fail":
-                criterion.compliance_issue = threshold_result.reasoning
-                criterion.compliance_citation = references[0].citation
-            continue  # deterministic answer found -- skip the LLM entirely
-
         result = classify(
-            subject_text=criterion.text[:600],  # long clauses were making prompts too slow
+            subject_text=criterion.text,
             references=references,
             verdict_options=_VERDICT_OPTIONS,
             instruction=_INSTRUCTION,
@@ -76,7 +68,11 @@ def check_rfp_compliance(structured_rfp: StructuredRFP) -> StructuredRFP:
         if result.verdict == "violation" and result.citation is not None:
             criterion.compliance_issue = result.reasoning
             criterion.compliance_citation = result.citation
+            logger.info("criterion %d/%d: FLAGGED -- %s", n, total, result.reasoning)
+        else:
+            logger.info("criterion %d/%d: verdict=%s -- not flagged", n, total, result.verdict)
 
+    logger.info("check_rfp_compliance(rfp_id=%r) done", structured_rfp.rfp_id)
     return structured_rfp
 
 

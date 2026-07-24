@@ -27,8 +27,8 @@ const ROLES = [
   {
     name: 'Bidders',
     icon: Handshake,
-    description: 'See a plain-language summary of published RFPs and a norm legitimacy check.',
-    comingSoon: true,
+    description: 'See published RFPs and exactly which documents you need to submit for each one.',
+    comingSoon: false,
   },
   {
     name: 'Admins',
@@ -107,6 +107,12 @@ export default function Landing() {
     <div className="min-h-screen bg-canvas text-ink">
       <GradientBackdrop />
       <Nav>
+        <Link
+          to="/bidder/login"
+          className="text-sm font-medium text-subtle transition-colors duration-200 hover:text-ink"
+        >
+          Bidder Login
+        </Link>
         <Link
           to="/login"
           className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white transition-all duration-200 hover:scale-[1.03] hover:bg-accent-hover hover:shadow-[0_0_24px_-6px_var(--color-accent)]"
@@ -280,9 +286,9 @@ export default function Landing() {
                   </a>
                 </li>
                 <li>
-                  <a href="#" className="text-subtle transition-colors duration-200 hover:text-ink">
-                    Bidders (soon)
-                  </a>
+                  <Link to="/bidder/login" className="text-subtle transition-colors duration-200 hover:text-ink">
+                    Bidders
+                  </Link>
                 </li>
                 <li>
                   <a href="#" className="text-subtle transition-colors duration-200 hover:text-ink">
