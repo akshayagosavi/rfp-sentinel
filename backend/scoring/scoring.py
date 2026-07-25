@@ -22,13 +22,15 @@ yet, and QCBS's weighting/quality-definition questions were still open
 during design, not confidently resolved. Tracked as deferred in
 ROADMAP.md, not silently missing.
 
-A price tie for L1 is surfaced, never auto-broken -- our own norms
-knowledge base has no documented tie-breaking rule (checked directly, not
-assumed), so guessing one (e.g. "earliest submission wins") would be
-inventing a rule with no citation behind it. Tied bidders go to the buyer
-dashboard for a human decision instead, matching the rest of this
-project's philosophy of escalating genuine uncertainty rather than
-guessing.
+A price tie for L1 is surfaced, and resolved only via run_l1_selection()
+below -- an explicit action, not automatic. This mirrors GeM's own real,
+documented "Run L1 selection" feature (a buyer-triggered random draw,
+sourced from gem.gov.in's own FAQ, not invented): if MSE purchase
+preference is active for the RFP, the draw is restricted to the MSE
+bidder(s) within the tied group; otherwise it's drawn from everyone tied.
+Earlier in this project's history the tie was left entirely to a human
+decision because no documented rule could be found -- that's since been
+superseded by finding GeM's actual mechanism, tracked in ROADMAP.md.
 
 The MSE price-band percentage and quantity-split ratio are NOT hardcoded
 -- the real NIELIT RFP proved a single RFP can override the general
@@ -39,6 +41,8 @@ numbers out of an RFP's raw clause text automatically is a separate,
 not-yet-built extraction step; this module only does the arithmetic once
 the numbers are known.
 """
+import random
+
 from pydantic import BaseModel
 
 from backend.models.evidence import EvidenceItem
@@ -98,38 +102,39 @@ def score_stage1(criteria: list[Criterion], evidence: list[EvidenceItem]) -> Sta
 class MsePriceMatchResult(BaseModel):
     activated: bool
     reasoning: str
+    l1_bid_id: str
     l1_price: float
     l1_share_percent: float
-    l1_bid_ids: list[str] = []  # more than one only if L1 itself is a tie
     matching_mse_bid_id: str | None = None
     mse_share_percent: float = 0.0
 
 
 def apply_mse_price_match(
     ranked_bids: list[tuple[str, float, bool]],
-    l1_bid_ids: list[str],
+    l1_bid_id: str,
     price_band_percent: float,
     mse_share_percent: float,
 ) -> MsePriceMatchResult:
     """ranked_bids: (bid_id, price, is_mse) tuples, already MII-filtered and
     price-sorted ascending -- the caller's job, not this function's.
-    l1_bid_ids may contain more than one bid_id if L1 is itself a tie; the
-    band math only needs the shared L1 price, not which specific bidder.
-    price_band_percent/mse_share_percent must come from the specific RFP's
-    own ATC text (e.g. 15% band + 60% share for the real NIELIT RFP)."""
-    l1_price = ranked_bids[0][1]
-    l1_is_mse = any(is_mse for bid_id, _, is_mse in ranked_bids if bid_id in l1_bid_ids)
+    l1_bid_id must be a single, already-resolved bidder -- if L1 was a tie,
+    resolve it with run_l1_selection() first (or however the buyer chose
+    to break it) before calling this. price_band_percent/mse_share_percent
+    must come from the specific RFP's own ATC text (e.g. 15% band + 60%
+    share for the real NIELIT RFP)."""
+    l1_price = next(price for bid_id, price, _ in ranked_bids if bid_id == l1_bid_id)
+    l1_is_mse = next(is_mse for bid_id, _, is_mse in ranked_bids if bid_id == l1_bid_id)
 
     if l1_is_mse:
         return MsePriceMatchResult(
             activated=False,
-            reasoning="The L1 bidder(s) are already MSE -- preference doesn't apply, they win the full quantity.",
-            l1_price=l1_price, l1_share_percent=100.0, l1_bid_ids=l1_bid_ids,
+            reasoning="The L1 bidder is already MSE -- preference doesn't apply, they win the full quantity.",
+            l1_bid_id=l1_bid_id, l1_price=l1_price, l1_share_percent=100.0,
         )
 
     band_ceiling = l1_price * (1 + price_band_percent / 100)
     for bid_id, price, is_mse in ranked_bids:
-        if bid_id in l1_bid_ids or not is_mse:
+        if bid_id == l1_bid_id or not is_mse:
             continue
         if price > band_ceiling:
             return MsePriceMatchResult(
@@ -139,7 +144,7 @@ def apply_mse_price_match(
                     f"band ceiling of {band_ceiling:.2f} over L1's {l1_price} -- preference does not "
                     "activate, L1 wins the full quantity."
                 ),
-                l1_price=l1_price, l1_share_percent=100.0, l1_bid_ids=l1_bid_ids,
+                l1_bid_id=l1_bid_id, l1_price=l1_price, l1_share_percent=100.0,
             )
         return MsePriceMatchResult(
             activated=True,
@@ -147,14 +152,14 @@ def apply_mse_price_match(
                 f"MSE bidder {bid_id} quoted {price}, within the {price_band_percent}% band "
                 f"(ceiling {band_ceiling:.2f}) -- offered to match L1's price of {l1_price}."
             ),
-            l1_price=l1_price, l1_share_percent=100 - mse_share_percent, l1_bid_ids=l1_bid_ids,
+            l1_bid_id=l1_bid_id, l1_price=l1_price, l1_share_percent=100 - mse_share_percent,
             matching_mse_bid_id=bid_id, mse_share_percent=mse_share_percent,
         )
 
     return MsePriceMatchResult(
         activated=False,
         reasoning="No MSE bidder found among the ranked bids -- L1 wins the full quantity.",
-        l1_price=l1_price, l1_share_percent=100.0, l1_bid_ids=l1_bid_ids,
+        l1_bid_id=l1_bid_id, l1_price=l1_price, l1_share_percent=100.0,
     )
 
 
@@ -165,9 +170,29 @@ class BidInput(BaseModel):
     is_mse: bool  # Micro/Small Enterprise status -- not yet auto-derived from bid documents
 
 
+def run_l1_selection(tied_bid_ids: list[str], bids: list[BidInput], mse_preference_active: bool) -> str:
+    """Mirrors GeM's own documented 'Run L1 selection' feature exactly
+    (sourced from gem.gov.in's FAQ, not invented): a buyer-triggered random
+    draw among bidders tied for L1, never automatic -- same "surface it,
+    don't silently resolve it" discipline used everywhere else in this
+    project, just backed by a real GeM mechanism now instead of a guess.
+
+    If MSE purchase preference is active for this RFP, the draw is
+    restricted to the MSE bidder(s) within the tied group; if none of the
+    tied bidders are MSE, or preference isn't active, it's drawn from
+    everyone tied."""
+    bids_by_id = {b.bid_id: b for b in bids}
+    candidates = tied_bid_ids
+    if mse_preference_active:
+        mse_candidates = [bid_id for bid_id in tied_bid_ids if bids_by_id[bid_id].is_mse]
+        if mse_candidates:
+            candidates = mse_candidates
+    return random.choice(candidates)
+
+
 class Stage2Result(BaseModel):
     ranking: list[dict]  # [{bid_id, price}, ...] price-ascending, MII-filtered
-    tied_for_l1: list[str] = []  # bid_ids sharing the lowest price -- buyer decides, never auto-broken
+    tied_for_l1: list[str] = []  # bid_ids sharing the lowest price -- resolve with run_l1_selection()
     mse_price_match: MsePriceMatchResult | None = None
 
 
@@ -177,9 +202,15 @@ def score_stage2(
     mse_share_percent: float | None = None,
 ) -> Stage2Result:
     """MII filter always runs first (excludes non-local suppliers before
-    anything else), then price ranking, then the MSE price-match (skipped
-    entirely if the RFP's band/share numbers weren't supplied). L1 only --
-    see module docstring for why QCBS isn't included in this build."""
+    anything else), then price ranking, then the MSE price-match. L1
+    only -- see module docstring for why QCBS isn't included in this build.
+
+    If L1 is a tie, mse_price_match is only computed automatically when
+    every tied bidder shares the same MSE status (the answer is
+    unambiguous either way in that case); a genuinely mixed tie (some
+    tied bidders MSE, some not) leaves mse_price_match unset until the
+    buyer resolves the tie via run_l1_selection() -- MSE price-matching
+    can't be determined without knowing which single bidder is actually L1."""
     mii_filtered = [b for b in bids if b.is_mii_local]
     ranked = sorted(mii_filtered, key=lambda b: b.price)
 
@@ -189,12 +220,17 @@ def score_stage2(
         return result
 
     lowest_price = ranked[0].price
-    tied_for_l1 = [b.bid_id for b in ranked if b.price == lowest_price]
+    tied_for_l1 = [b for b in ranked if b.price == lowest_price]
     if len(tied_for_l1) > 1:
-        result.tied_for_l1 = tied_for_l1
+        result.tied_for_l1 = [b.bid_id for b in tied_for_l1]
 
-    if price_band_percent is not None and mse_share_percent is not None:
+    mse_statuses = {b.is_mse for b in tied_for_l1}
+    l1_unambiguous = len(mse_statuses) == 1  # every tied L1 bidder shares the same MSE status
+
+    if price_band_percent is not None and mse_share_percent is not None and l1_unambiguous:
         tuples = [(b.bid_id, b.price, b.is_mse) for b in ranked]
-        result.mse_price_match = apply_mse_price_match(tuples, tied_for_l1, price_band_percent, mse_share_percent)
+        result.mse_price_match = apply_mse_price_match(
+            tuples, tied_for_l1[0].bid_id, price_band_percent, mse_share_percent
+        )
 
     return result

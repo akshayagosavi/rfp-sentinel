@@ -1,102 +1,139 @@
 # RFP Sentinel
 
-A RAG-based bid-evaluation co-pilot for GeM (Government e-Marketplace) Technical Evaluators, scoped to the **Electronics category**. It serves the **buyer/evaluator side** of government procurement — every commercial RFP-AI tool on the market serves bidders responding to tenders; this is the other side of that transaction, a gap in the market.
+A RAG-based bid-evaluation co-pilot for GeM (Government e-Marketplace) Technical Evaluators, scoped to the **Electronics category**. It serves the **buyer/evaluator side** of government procurement — every commercial RFP-AI tool on the market serves bidders responding to tenders; this is the other side of that transaction, a gap in the market. A light, read-only bidder-facing view (published RFPs + required-documents checklist) also exists, deliberately not a bid-writing tool, so it doesn't compete with the buyer-side thesis.
 
 <img width="1920" height="925" alt="image" src="https://github.com/user-attachments/assets/67c1c3d5-fa5d-4ad4-abef-d9c7a15bff84" />
 <img width="1920" height="925" alt="image" src="https://github.com/user-attachments/assets/1c7aa3a2-8ec6-42e9-9060-bbd0ad67d606" />
 <img width="1920" height="925" alt="image" src="https://github.com/user-attachments/assets/7067c59d-22d3-4514-a54a-95d8f30c4e5d" />
 <img width="1920" height="925" alt="Screenshot from 2026-07-21 23-44-49" src="https://github.com/user-attachments/assets/eff4c7bf-ad7a-4f69-8262-173019011d2d" />
 
+A buyer uploads an RFP/tender PDF. The system extracts its requirements, checks them against a knowledge base of real government procurement norms (GeM's GTC, the MSME Public Procurement Policy, GFR 2017, DPIIT Make-in-India orders, MeitY's CRS handbook), separately checks the RFP against **its own** listed buyer drafting-mistakes, flags anything that conflicts with a citation, and pauses for a human to review before anything is published. Once bids come in, the same machinery checks each bidder's submission against the approved criteria and scores/ranks the survivors — that half is built and tested but not yet wired into one continuous flow (see [Current status](#current-status-v1-in-progress-roughly-87-complete)).
 
-A buyer uploads an RFP/tender PDF. The system extracts its requirements, checks them against a knowledge base of real government procurement norms (GeM's General Terms & Conditions, the MSME Public Procurement Policy, MeitY's CRS handbook), flags anything that conflicts with those norms with a citation, and pauses for a human to review before anything is published.
+## Current status (v1, in progress — roughly 87% complete)
 
-## Current status (v1, in progress)
+**Buyer side — ~99%, fully working end-to-end:**
+- RFP PDF upload → criteria extraction (LLM-classified: guidance-vs-criterion, mandatory/optional, technical/financial/eligibility/other) → compliance check against the norms knowledge base → a **second, separate self-check** of the RFP's own criteria against GeM's own listed "buyer prohibited practices" (e.g. "don't name a specific brand," "don't ask for a Tender fee") → human checkpoint with override-and-reasoning → publish.
+- LangGraph orchestrates the pipeline; Postgres is the checkpoint store; FastAPI serves it; a React dashboard drives it.
+- Real, sourced logic for edge cases most systems get wrong by omission — e.g. `run_l1_selection()` implements GeM's own documented random-draw tie-break mechanism (MSE-priority-aware), not an invented rule.
 
-**Built and working end-to-end today:**
-- Norm-document ingestion → Qdrant knowledge base (3 real government documents, ~728 chunks)
-- RFP PDF upload → criteria extraction → compliance check against norms → human checkpoint → publish
-- A React dashboard (buyer role only) wired to a FastAPI backend, with LangGraph orchestrating the pipeline and Postgres as its checkpoint store
-- Minimal JWT login (single hardcoded demo credential — see [Authentication](#authentication-v1-shortcut) below)
+**Bid evaluation — core logic ~75%, built and individually tested, not yet one connected pipeline:**
+- Bid ingestion with a structural technical/financial (Packet-I/Packet-II) seal — `search_bid()` defaults to Packet-I, so a caller that forgets to specify a packet can never see pricing data, proven directly by testing.
+- A fast document-completeness checklist (did the bidder submit the right document *types*, before checking content).
+- Evidence extraction — does the bidder's content actually satisfy each approved criterion, with citations.
+- A deterministic scoring engine (Stage 1 pass/fail gate, Stage 2 MII-filter → price-rank → MSE price-match) — zero LLM/Qdrant dependency, real pytest suite, not just a smoke test.
+- Not yet done: wiring these four pieces into `build_graph.py` the way the buyer-side steps are, and auto-extracting the scoring engine's remaining manual inputs (MSE band %, bid price, MII/MSE flags).
 
-**Not yet built** (see `ROADMAP.md` for the full list):
-- Bidder-side upload and bid-vs-criteria evaluation (the scoring/shortlist half of the pipeline)
-- Admin dashboard, multi-user auth, bidder dashboard
-- LLM-based criteria extraction (current extraction is rule-based — see [Design notes](#design-notes-worth-knowing))
+**Bidder-facing — ~90%:** read-only login, a dashboard listing published RFPs, and a detail page showing the required-documents checklist with clear submission guidance. Backend and frontend both built; not yet visually verified in a browser.
+
+**Not yet built:** Admin dashboard (norm management, buyer-conduct oversight, user management — see `ROADMAP.md`), bid upload UI, Checkpoint B, multi-user auth beyond one demo credential per role.
 
 ## Architecture
 
 ```
                      ┌─────────────────────┐
   Norm PDFs  ──────▶ │  Ingestion pipeline  │ ──▶ Qdrant (`norms` collection)
- (GTC, MSME,         │  extract → chunk →   │     — the permanent rulebook,
-  CRS handbook)      │  embed → store       │       built once, ahead of time
+ (GTC, MSME, GFR,    │  extract → chunk →   │     — the permanent rulebook,
+  MII orders, CRS)   │  embed → store       │       built once, ahead of time
                      └─────────────────────┘
 
-                     ┌──────────────────────────────────────────────┐
-  RFP PDF   ───────▶ │ LangGraph pipeline (FastAPI + Postgres ckpt) │
- (buyer upload)      │                                              │
-                     │  1. extract_rfp_criteria   (rule-based)      │
-                     │  2. check_rfp_compliance   (real agent —     │
-                     │     search Qdrant + threshold-check or LLM)  │
-                     │  3. checkpoint_a           (pause for human) │
-                     └──────────────────────────────────────────────┘
+                     ┌────────────────────────────────────────────────────────┐
+  RFP PDF   ───────▶ │ LangGraph pipeline (FastAPI + Postgres checkpoint)     │
+ (buyer upload)      │                                                        │
+                     │  1. extract_rfp_criteria     (LLM-classified)          │
+                     │  2. check_rfp_compliance     (search norms + classify) │
+                     │  3. check_prohibited_practices (RFP vs its own rules)  │
+                     │  4. checkpoint_a             (pause for human)         │
+                     └────────────────────────────────────────────────────────┘
                                         │
                                         ▼
                           React dashboard (buyer reviews,
                           approves/publishes or fixes issues)
+
+  ── built and tested, not yet wired into the graph above ──
+
+  Bid PDFs ────────▶ ingest_bid (Packet-I/II seal) ──▶ Qdrant (`bids` collection)
+                              │
+                              ▼
+              check_document_completeness  (fast presence check)
+                              │
+                              ▼
+              retrieve_and_extract_evidence (per approved criterion)
+                              │
+                              ▼
+              scoring.py — Stage 1 gate → Stage 2 rank (MII → price → MSE match)
+                              │
+                              ▼
+                    ◆ CHECKPOINT B (not built) — evaluator confirms shortlist
+
+  ── read-only, separate from the flow above ──
+
+  Bidder login ───▶ GET /bidder/rfps, GET /bidder/rfps/{id}
+                     (published RFPs + required-documents checklist)
 ```
 
-See `docs/agent-architecture.md` for a detailed breakdown of what's actually agentic here (one real agent today) versus fixed pipeline code, and why.
+See `docs/agent-architecture.md` for which of these steps are genuinely agentic (tool choice + judgment that varies with what's discovered) versus fixed pipeline code, and why that distinction matters for an audit trail.
 
 ## Tech stack
 
 | Layer | Choice |
 |---|---|
-| LLM + embeddings | Llama 3.2 3B + nomic-embed-text, via Ollama (local, CPU-only) |
-| Vector store | Qdrant (Docker) |
+| LLM + embeddings | Configurable via `OLLAMA_BASE_URL`/`OLLAMA_LLM_MODEL` — local `llama3.2:3b` or a remote, more capable model (verified with `qwen2.5:7b` on a trusted remote server: faster *and* more accurate on numeric-reasoning cases the local model got wrong). Embeddings: `nomic-embed-text`, 768-dim, unchanged either way. |
+| Vector store | Qdrant (Docker) — two collections, `norms` (permanent) and `bids` (per-bidder, Packet-I/II tagged) |
 | Metadata / checkpoint store | Postgres (Docker) |
 | Orchestration | LangGraph (`PostgresSaver` checkpointer, human-in-the-loop `interrupt()`) |
 | Backend API | FastAPI |
 | Frontend | React 19 + Vite + Tailwind CSS v4 + Framer Motion |
 | Legacy frontend | Streamlit (preserved at `frontend/legacy_streamlit/`, superseded by the React app) |
+| Testing | pytest — real unit tests for the scoring engine (the one part of the system with zero LLM/Qdrant dependency) |
 
-Chosen for a local-first, no-GPU, 12GB-RAM machine, with bidder-data confidentiality in mind (nothing leaves the machine).
+Originally chosen for a local-first, no-GPU, 12GB-RAM machine with bidder-data confidentiality in mind (nothing leaves the machine). That confidentiality property is now a deliberate, revisited trade-off, not a given — see [Design notes](#design-notes-worth-knowing).
 
 ## Repo structure
 
 ```
 backend/
-├── main.py                  FastAPI app: lifespan (Postgres pool + compiled graph), CORS, routers
-├── auth.py                  Minimal JWT login (v1 shortcut, see below)
+├── main.py                          FastAPI app: lifespan (Postgres pool + compiled graph), CORS, routers
+├── auth.py                          Role-aware JWT login (buyer + bidder demo credentials — v1 shortcut, see below)
+├── logging_config.py                Shared logger -> console + logs/rfp_sentinel.log
 ├── api/
-│   ├── auth.py               POST /auth/login
-│   └── rfp.py                POST /rfp/upload, GET .../status, GET .../criteria, POST .../criteria/approve
+│   ├── auth.py                       POST /auth/login
+│   ├── rfp.py                        Buyer: upload, status, criteria, approve
+│   └── bidder.py                     Bidder: GET /bidder/rfps, GET /bidder/rfps/{id}
 ├── graph/
-│   ├── state.py              LangGraph state shape
-│   ├── build_graph.py        extract → check_compliance → checkpoint_a
-│   ├── extract_rfp_criteria.py
-│   └── check_rfp_compliance.py
-├── llm/ollama_client.py       Generic JSON-mode classifier (text + retrieved refs → verdict + citation)
-├── scoring/threshold_check.py Deterministic number-threshold checker (LLM is unreliable at this — see docs)
-├── rag/                       Qdrant client + embeddings wrapper
-└── models/rfp.py               Criterion / StructuredRFP (Pydantic)
+│   ├── state.py                      LangGraph state shape
+│   ├── build_graph.py                extract -> check_compliance -> check_prohibited_practices -> checkpoint_a
+│   ├── extract_rfp_criteria.py       PDF -> criteria + required_documents + prohibited_practices
+│   ├── check_rfp_compliance.py       criteria vs. the norms knowledge base
+│   ├── check_prohibited_practices.py criteria vs. THIS RFP's own listed buyer drafting-mistakes
+│   ├── check_document_completeness.py  did the bidder submit the right document TYPES (not yet wired)
+│   └── retrieve_and_extract_evidence.py  does bid content satisfy each criterion (not yet wired)
+├── llm/ollama_client.py              Generic JSON-mode classifier (text + refs -> verdict + citation), with
+│                                      retry-on-network-error and per-call logging
+├── scoring/scoring.py                Deterministic Stage 1 gate + Stage 2 rank (MII/price/MSE-match/tie-break),
+│                                      zero LLM/Qdrant dependency, unit-tested (not yet wired)
+├── rag/                              Qdrant client + embeddings wrapper
+└── models/                           rfp.py, evidence.py (Pydantic)
 
-ingestion/                     extract_text, extract_tables, language_filter, chunker, ingest_norms
+ingestion/                            extract_text, extract_tables, language_filter, chunker, ingest_norms, ingest_bid
 data/
-├── norms/                     Government norm PDFs + manifest.json (versioning/status)
-├── rfps/                      Uploaded RFP PDFs
-└── bids/                      (not yet used — bidder upload not built)
+├── norms/                            Government norm PDFs + manifest.json (versioning/status)
+├── rfps/                             Uploaded RFP PDFs
+└── bids/                             Uploaded bid PDFs, Packet-I/II tagged
 
 frontend/
-├── src/                        React app: Landing, BuyerLogin, BuyerDashboard, ComingSoon (bidder/admin stubs)
-└── legacy_streamlit/           Original Streamlit dashboard, preserved not deleted
+├── src/
+│   ├── pages/                         Landing, BuyerLogin/Dashboard, BidderLogin/Dashboard/RfpDetail, ComingSoon (admin stub)
+│   └── context/AuthContext.jsx        Token + role, drives routing/gating for both buyer and bidder
+└── legacy_streamlit/                  Original Streamlit dashboard, preserved not deleted
 
 docs/
-├── agent-architecture.md      What's actually agentic vs. fixed pipeline, and why
-└── diagrams/                   Exported flow diagrams
+├── agent-architecture.md             What's actually agentic vs. fixed pipeline, and why
+├── STATUS_REPORT.md                  Detailed, step-by-step build log and current status
+└── diagrams/                          Exported flow diagrams
 
-scripts/                        verify_infra.py, verify_env.py, query_norms.py — standalone sanity checks
-tests/                          Scaffolded, not yet populated with real test cases
+scripts/                              verify_infra.py, verify_env.py — standalone sanity checks
+tests/test_scoring.py                 Real pytest suite for the scoring engine
+logs/                                 rfp_sentinel.log (git-ignored) — live progress for any long LLM-heavy run
 ```
 
 ## Local setup
@@ -105,7 +142,7 @@ tests/                          Scaffolded, not yet populated with real test cas
 - Docker (Desktop or Engine)
 - Python 3.11+ with a venv at `./venv`
 - Node.js 20+
-- [Ollama](https://ollama.com) installed, with `llama3.2:3b` and `nomic-embed-text` pulled:
+- [Ollama](https://ollama.com), local or remote — with `llama3.2:3b` (or whatever model you configure) and `nomic-embed-text` pulled:
   ```
   ollama pull llama3.2:3b
   ollama pull nomic-embed-text
@@ -142,15 +179,23 @@ cd frontend && npm run dev
 ```
 Wait for the `Local: http://localhost:5173/` line.
 
-**Then:** open **http://localhost:5173**, log in, upload an RFP PDF.
+**Then:** open **http://localhost:5173**. Buyer flow: log in as buyer, upload an RFP PDF. Bidder flow: log in as bidder, browse published RFPs and their required-documents checklists.
 
 ### Authentication (v1 shortcut)
 
-Default demo login: `buyer@rfpsentinel.local` / `changeme` (set via `BUYER_EMAIL` / `BUYER_PASSWORD` in `.env`). This is a single hardcoded credential with a real JWT issued on login — no password hashing, no `users` table. Deliberate, documented v1 scope-cut, not a hidden gap; real multi-user auth is v1.1 (see `ROADMAP.md`).
+Two hardcoded demo credentials, one per role, each issuing a real JWT with the role baked in:
+- Buyer: `buyer@rfpsentinel.local` / `changeme` (`BUYER_EMAIL` / `BUYER_PASSWORD` in `.env`)
+- Bidder: `bidder@rfpsentinel.local` / `changeme` (`BIDDER_EMAIL` / `BIDDER_PASSWORD` in `.env`)
+
+No password hashing, no `users` table — deliberate, documented v1 scope-cut, not a hidden gap; real multi-user auth is v1.1 (see `ROADMAP.md`).
 
 ### If something goes wrong mid-evaluation
 
-An RFP evaluation can take **15-25 minutes** on CPU-only hardware (roughly 20-40 seconds per criterion through the LLM). To check if something's actually happening:
+An RFP evaluation now typically takes **8-15 minutes** (down from an original 15-25 minutes — extraction runs up to 5 LLM questions concurrently, with automatic retry on network errors). Watch it live:
+```
+tail -f logs/rfp_sentinel.log
+```
+Every step logs a running "N of Total done" count, so a stall or crash shows exactly where it happened, not just a final printout.
 ```
 ps aux --sort=-%cpu | head -10
 ```
@@ -160,17 +205,18 @@ To abort an in-progress evaluation:
 ```
 pkill -9 -f "uvicorn backend.main:app"
 ./venv/bin/uvicorn backend.main:app --reload --host 0.0.0.0
-
 ```
 Killing the backend stops it from continuing; Ollama itself may stay busy for another 30-90 seconds finishing whatever single request was already in flight before it notices the connection is gone — that's normal, not stuck.
 
 ## Design notes worth knowing
 
-- **Criteria extraction is rule-based, not LLM-based.** Mandatory/optional and category (financial/eligibility) are decided by keyword regex, not a model call — a deliberate speed/reliability trade-off under time pressure, not an oversight. See `docs/agent-architecture.md`.
-- **Numeric compliance checks are deterministic, not LLM-judged.** Testing found the LLM reliably identifies the right numbers in a threshold comparison but consistently draws the wrong conclusion from them, even at temperature 0. Plain comparisons are now handled by `threshold_check.py`; the LLM is only used for genuinely qualitative judgment.
-- **Every compliance flag carries a citation** (norm name, clause, page) — an LLM verdict is never surfaced without one. This is the actual validation mechanism in the absence of a labeled ground-truth dataset: every flag is traceable and independently checkable against the real cited text.
+- **Criteria extraction is LLM-classified, not regex.** It started as pure keyword regex (a deliberate speed trade-off under time pressure), then moved to LLM classification once a larger remote model was confirmed faster *and* more reliable than the original local one. Regex is still used, but only for the parts that are genuinely deterministic text-extraction problems (pulling out the required-documents list and the RFP's own prohibited-practices list from known layout markers), not for judgment calls.
+- **The old deterministic numeric-threshold workaround (`threshold_check.py`) has been removed.** It existed because the original local model reliably got numeric comparisons backwards, even at temperature 0; it was removed after a controlled side-by-side test confirmed the new model gets the same cases right without it.
+- **Every flag carries a citation** (norm clause, RFP's own prohibited-practice text, or bid document/page) — an LLM verdict is never surfaced without one. This is the actual validation mechanism in the absence of a labeled ground-truth dataset: every flag is traceable and independently checkable against the real cited text.
+- **Data locality is a real, revisited trade-off, not a fixed guarantee.** The original design ran everything on a local, no-GPU machine specifically so bid/RFP content never left the machine. Pointing `OLLAMA_BASE_URL` at a remote server (even a trusted one) reopens that exact question — worth remembering if the remote server's trust status ever changes.
+- **Ties and other genuinely ambiguous outcomes are surfaced, not guessed.** A tied L1 price is resolved only by an explicit, buyer-triggered `run_l1_selection()` call (mirroring GeM's own real, documented mechanism, not an invented rule) — and even that function refuses to auto-resolve a price-match decision when a tie has mixed MSE status, since the answer is genuinely undetermined until the tie itself is broken.
 - **The Postgres checkpoint only saves progress at step boundaries**, not continuously — killing the backend mid-step loses that step's in-progress work; already-completed steps stay saved but nothing currently auto-resumes an interrupted evaluation.
 
 ## Roadmap
 
-See `ROADMAP.md` for what's deliberately deferred — v1.1 (multi-role auth, bidder/admin dashboards, bidder self-service upload), v2+ (OCR, multilingual, parallel evidence extraction), and near-term norm-data follow-ups.
+See `ROADMAP.md` for what's deliberately deferred — v1.1 (multi-role auth, admin dashboard, bidder self-service upload), v2+ (OCR, multilingual, QCBS), and near-term norm-data follow-ups. It also tracks real procurement edge cases identified during development (arithmetic-discrepancy correction rules, single-bid validity, abnormally-low-bid handling, blacklist/debarment checks) that aren't built yet but are documented so they're not silently missing.

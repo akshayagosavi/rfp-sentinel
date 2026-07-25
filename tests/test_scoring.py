@@ -7,7 +7,7 @@ not, since 10L exceeds L1's 15% band ceiling of 9.2L).
 """
 from backend.models.evidence import EvidenceItem
 from backend.models.rfp import Criterion
-from backend.scoring.scoring import BidInput, apply_mse_price_match, score_stage1, score_stage2
+from backend.scoring.scoring import BidInput, apply_mse_price_match, run_l1_selection, score_stage1, score_stage2
 
 
 def _criterion(id_, mandatory, category="technical"):
@@ -130,7 +130,7 @@ def test_stage2_mse_price_match_skipped_without_params():
 def test_mse_price_match_activates_within_15_percent_band():
     # L1 (non-MSE) at 8,00,000; MSE bidder at 9,00,000 -- within 8L * 1.15 = 9.2L
     ranked = [("l1-bidder", 800_000, False), ("mse-bidder", 900_000, True)]
-    result = apply_mse_price_match(ranked, l1_bid_ids=["l1-bidder"], price_band_percent=15, mse_share_percent=60)
+    result = apply_mse_price_match(ranked, l1_bid_id="l1-bidder", price_band_percent=15, mse_share_percent=60)
     assert result.activated is True
     assert result.matching_mse_bid_id == "mse-bidder"
     assert result.mse_share_percent == 60
@@ -141,7 +141,7 @@ def test_mse_price_match_does_not_activate_outside_15_percent_band():
     # Same L1 at 8,00,000; MSE bidder at 10,00,000 -- exceeds the 9.2L ceiling.
     # This is the exact scenario confirmed earlier: MSME does NOT automatically win.
     ranked = [("l1-bidder", 800_000, False), ("mse-bidder", 1_000_000, True)]
-    result = apply_mse_price_match(ranked, l1_bid_ids=["l1-bidder"], price_band_percent=15, mse_share_percent=60)
+    result = apply_mse_price_match(ranked, l1_bid_id="l1-bidder", price_band_percent=15, mse_share_percent=60)
     assert result.activated is False
     assert result.l1_share_percent == 100.0
     assert result.matching_mse_bid_id is None
@@ -149,20 +149,74 @@ def test_mse_price_match_does_not_activate_outside_15_percent_band():
 
 def test_mse_price_match_l1_already_mse_skips_preference():
     ranked = [("l1-bidder", 800_000, True)]
-    result = apply_mse_price_match(ranked, l1_bid_ids=["l1-bidder"], price_band_percent=15, mse_share_percent=60)
+    result = apply_mse_price_match(ranked, l1_bid_id="l1-bidder", price_band_percent=15, mse_share_percent=60)
     assert result.activated is False
     assert result.l1_share_percent == 100.0
 
 
 def test_mse_price_match_no_mse_bidder_present():
     ranked = [("l1-bidder", 800_000, False), ("other-bidder", 850_000, False)]
-    result = apply_mse_price_match(ranked, l1_bid_ids=["l1-bidder"], price_band_percent=15, mse_share_percent=60)
+    result = apply_mse_price_match(ranked, l1_bid_id="l1-bidder", price_band_percent=15, mse_share_percent=60)
     assert result.activated is False
 
 
-def test_mse_price_match_tied_l1_uses_shared_price():
-    # Two bidders tie for L1 -- band math should still work off the shared price.
-    ranked = [("b1", 800_000, False), ("b2", 800_000, False), ("mse-bidder", 900_000, True)]
-    result = apply_mse_price_match(ranked, l1_bid_ids=["b1", "b2"], price_band_percent=15, mse_share_percent=60)
-    assert result.activated is True
-    assert result.l1_price == 800_000
+# --- Tied L1 with mixed MSE status: the bug found and fixed this round ---
+
+
+def test_stage2_mixed_mse_tie_defers_price_match_to_buyer():
+    # b1 (non-MSE) and b2 (MSE) tie for L1 -- genuinely ambiguous who "L1" is
+    # for price-match purposes, so this must NOT auto-resolve.
+    bids = [
+        BidInput(bid_id="b1", price=800_000, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="b2", price=800_000, is_mii_local=True, is_mse=True),
+    ]
+    result = score_stage2(bids, price_band_percent=15, mse_share_percent=60)
+    assert set(result.tied_for_l1) == {"b1", "b2"}
+    assert result.mse_price_match is None  # ambiguous -- must wait for run_l1_selection()
+
+
+def test_stage2_unambiguous_tie_still_computes_price_match():
+    # Both tied bidders are non-MSE -- no ambiguity about MSE status even
+    # though the tie itself (who wins) is still unresolved.
+    bids = [
+        BidInput(bid_id="b1", price=800_000, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="b2", price=800_000, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="mse-bidder", price=900_000, is_mii_local=True, is_mse=True),
+    ]
+    result = score_stage2(bids, price_band_percent=15, mse_share_percent=60)
+    assert set(result.tied_for_l1) == {"b1", "b2"}
+    assert result.mse_price_match is not None
+    assert result.mse_price_match.activated is True
+    assert result.mse_price_match.l1_bid_id in {"b1", "b2"}
+
+
+# --- run_l1_selection(): GeM's own documented tie-break mechanism ---
+
+
+def test_run_l1_selection_picks_among_tied_bidders():
+    bids = [
+        BidInput(bid_id="b1", price=100, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="b2", price=100, is_mii_local=True, is_mse=False),
+    ]
+    winner = run_l1_selection(["b1", "b2"], bids, mse_preference_active=False)
+    assert winner in {"b1", "b2"}
+
+
+def test_run_l1_selection_restricts_to_mse_when_preference_active():
+    bids = [
+        BidInput(bid_id="non-mse", price=100, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="mse-1", price=100, is_mii_local=True, is_mse=True),
+        BidInput(bid_id="mse-2", price=100, is_mii_local=True, is_mse=True),
+    ]
+    for _ in range(20):  # random draw -- run enough times to catch it ever picking the non-MSE bidder
+        winner = run_l1_selection(["non-mse", "mse-1", "mse-2"], bids, mse_preference_active=True)
+        assert winner in {"mse-1", "mse-2"}
+
+
+def test_run_l1_selection_falls_back_to_all_tied_when_none_are_mse():
+    bids = [
+        BidInput(bid_id="b1", price=100, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="b2", price=100, is_mii_local=True, is_mse=False),
+    ]
+    winner = run_l1_selection(["b1", "b2"], bids, mse_preference_active=True)
+    assert winner in {"b1", "b2"}
