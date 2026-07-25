@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 import psycopg
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg_pool import ConnectionPool
 
@@ -83,28 +83,52 @@ def _decode(creds: HTTPAuthorizationCredentials) -> dict:
         raise HTTPException(401, "Invalid or expired token")
 
 
-def get_current_buyer(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+def _check_active(request: Request, email: str) -> None:
+    """Closes the gap a JWT's own expiry can't: deactivating a user
+    (backend/api/admin.py) previously only blocked *new* logins -- an
+    already-issued token stayed valid until its 24h expiry regardless.
+    This makes deactivation take effect immediately on every subsequent
+    authenticated request, not just at the next login attempt. One extra
+    indexed lookup per request (users.email is UNIQUE, so this is a
+    single-row lookup) -- the same tradeoff ordinary session-based auth
+    makes for the same reason, here paid explicitly since JWTs are
+    otherwise stateless."""
+    from backend.db import is_user_active  # local import: avoids a circular import with db.py
+
+    if not is_user_active(request.app.state.db_pool, email):
+        raise HTTPException(403, "This account has been deactivated")
+
+
+def get_current_buyer(request: Request, creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
     payload = _decode(creds)
     if payload.get("role") != "buyer":
         raise HTTPException(403, "Buyer role required")
-    return payload["sub"]
+    email = payload["sub"]
+    _check_active(request, email)
+    return email
 
 
-def get_current_bidder(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+def get_current_bidder(request: Request, creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
     payload = _decode(creds)
     if payload.get("role") != "bidder":
         raise HTTPException(403, "Bidder role required")
-    return payload["sub"]
+    email = payload["sub"]
+    _check_active(request, email)
+    return email
 
 
-def get_current_admin(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+def get_current_admin(request: Request, creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
     payload = _decode(creds)
     if payload.get("role") != "admin":
         raise HTTPException(403, "Admin role required")
-    return payload["sub"]
+    email = payload["sub"]
+    _check_active(request, email)
+    return email
 
 
-def get_current_user_email(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+def get_current_user_email(request: Request, creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
     """Any authenticated role -- for endpoints like /auth/me that aren't
     role-specific, unlike get_current_buyer/get_current_bidder above."""
-    return _decode(creds)["sub"]
+    email = _decode(creds)["sub"]
+    _check_active(request, email)
+    return email

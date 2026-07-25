@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS rfps (
     closed_at TIMESTAMPTZ,
     stage2_result JSONB,  -- Stage2Result.model_dump() (see scoring.py) -- set once "Open Financial
                           -- Bids" completes; status flips to 'evaluated' at the same time
+    summary TEXT,  -- bidder-facing plain-language summary, cached after first generation -- the
+                   -- RFP's own content is immutable once published, so regenerating it on every
+                   -- page view would just be wasted LLM calls for an identical answer
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -123,6 +126,7 @@ def setup_tables(pool: ConnectionPool) -> None:
         conn.execute("ALTER TABLE bid_evidence ADD COLUMN IF NOT EXISTS resolution_reasoning TEXT")
         conn.execute("ALTER TABLE bid_evidence ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ")
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+        conn.execute("ALTER TABLE rfps ADD COLUMN IF NOT EXISTS summary TEXT")
         # One bid per bidder per RFP for now -- no amend/resubmit flow yet
         # (tracked in ROADMAP.md), so this is a hard constraint, not just a
         # UI convention.
@@ -224,7 +228,7 @@ def get_rfp_record(pool: ConnectionPool, rfp_id: str) -> dict | None:
         row = conn.execute(
             """
             SELECT r.rfp_id, r.title, r.category, r.closing_date, r.status, u.org_name AS buyer_org,
-                   r.gem_bid_number, r.stage2_result
+                   r.gem_bid_number, r.stage2_result, r.summary
             FROM rfps r JOIN users u ON u.id = r.buyer_user_id
             WHERE r.rfp_id = %s
             """,
@@ -233,7 +237,13 @@ def get_rfp_record(pool: ConnectionPool, rfp_id: str) -> dict | None:
     if row is None:
         return None
     return {"rfp_id": row[0], "title": row[1], "category": row[2], "closing_date": row[3].isoformat(),
-            "status": row[4], "buyer_org": row[5], "gem_bid_number": row[6], "stage2_result": row[7]}
+            "status": row[4], "buyer_org": row[5], "gem_bid_number": row[6], "stage2_result": row[7],
+            "summary": row[8]}
+
+
+def save_rfp_summary(pool: ConnectionPool, rfp_id: str, summary: str) -> None:
+    with pool.connection() as conn:
+        conn.execute("UPDATE rfps SET summary = %s WHERE rfp_id = %s", (summary, rfp_id))
 
 
 def get_user_profile(pool: ConnectionPool, email: str) -> dict | None:
@@ -548,3 +558,14 @@ def set_user_active(pool: ConnectionPool, user_id: int, is_active: bool) -> bool
             "UPDATE users SET is_active = %s WHERE id = %s RETURNING id", (is_active, user_id)
         ).fetchone()
     return row is not None
+
+
+def is_user_active(pool: ConnectionPool, email: str) -> bool:
+    """Checked on every authenticated request (backend/auth.py's
+    get_current_*), not just at login -- makes a deactivation take effect
+    immediately instead of waiting for the user's existing JWT to expire.
+    A user that no longer exists is treated as inactive (deny), not an
+    error -- same fail-closed default as any other missing-record case."""
+    with pool.connection() as conn:
+        row = conn.execute("SELECT is_active FROM users WHERE email = %s", (email,)).fetchone()
+    return bool(row and row[0])

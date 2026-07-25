@@ -7,7 +7,7 @@ import Nav from '../components/Nav'
 import GradientBackdrop from '../components/GradientBackdrop'
 
 export default function AdminLogin() {
-  const { login } = useAuth()
+  const { login, logout } = useAuth()
   const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
   const [email, setEmail] = useState('')
@@ -20,7 +20,17 @@ export default function AdminLogin() {
     setError('')
     setSubmitting(true)
     try {
-      await login(email, password)
+      const userRole = await login(email, password)
+      // The backend only checks email+password, not which login page was
+      // used -- a buyer/bidder's correct credentials would otherwise
+      // "succeed" here too, just to get silently redirected away later by
+      // the dashboard's own role guard. Reject it right here instead, with
+      // a real error, and roll back the session login() just applied.
+      if (userRole !== 'admin') {
+        logout()
+        setError('This account is not an admin account. Use the login page for your account type.')
+        return
+      }
       navigate('/admin/dashboard')
     } catch {
       setError('Invalid email or password.')

@@ -13,7 +13,7 @@ export default function GradientBackdrop() {
         className="absolute left-1/2 top-1/2 h-[44rem] w-[44rem] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
         style={{
           background:
-            'radial-gradient(circle, color-mix(in srgb, var(--color-accent) 55%, transparent) 0%, color-mix(in srgb, var(--color-accent) 18%, transparent) 45%, transparent 72%)',
+            'radial-gradient(circle, color-mix(in srgb, var(--color-accent) var(--glow-strong), transparent) 0%, color-mix(in srgb, var(--color-accent) var(--glow-soft), transparent) 45%, transparent 72%)',
         }}
         animate={reduceMotion ? undefined : { scale: [1, 1.1, 1], opacity: [0.75, 1, 0.75] }}
         transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut' }}

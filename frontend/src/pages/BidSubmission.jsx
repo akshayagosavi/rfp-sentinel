@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, ChevronLeft, Loader2, Lock, UploadCloud, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronLeft, Circle, Loader2, Lock, UploadCloud, X } from 'lucide-react'
 import { getBidDetail, submitBid } from '../api/client'
 import Nav from '../components/Nav'
+import Container from '../components/Container'
+import Footer from '../components/Footer'
 
 // GeM RFP templates list some required docs as generic, numbered
 // placeholders ("Additional Doc 1 (Requested in ATC)", "...Doc 2...")
@@ -99,6 +101,19 @@ function GenericDocsSlot({ count, files, onChange }) {
   )
 }
 
+function ProgressItem({ done, label }) {
+  return (
+    <li className="flex items-center gap-2 text-xs">
+      {done ? (
+        <CheckCircle2 size={14} className="shrink-0 text-success" />
+      ) : (
+        <Circle size={14} className="shrink-0 text-subtle/40" />
+      )}
+      <span className={done ? 'text-ink' : 'text-subtle'}>{label}</span>
+    </li>
+  )
+}
+
 export default function BidSubmission() {
   const { rfpId } = useParams()
   const [bid, setBid] = useState(null)
@@ -148,9 +163,9 @@ export default function BidSubmission() {
 
   if (success) {
     return (
-      <div className="min-h-screen bg-canvas text-ink">
+      <div className="flex min-h-screen flex-col bg-canvas text-ink">
         <Nav />
-        <div className="mx-auto max-w-2xl px-6">
+        <Container className="flex-1">
           <main className="py-16 text-center">
             <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success-soft text-success">
               <CheckCircle2 size={22} />
@@ -166,15 +181,16 @@ export default function BidSubmission() {
               Go to My Bids
             </Link>
           </main>
-        </div>
+        </Container>
+        <Footer slim />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="flex min-h-screen flex-col bg-canvas text-ink">
       <Nav />
-      <div className="mx-auto max-w-2xl px-6">
+      <Container className="flex-1">
         <div className="border-b border-line py-4">
           <Link to={`/bids/${rfpId}`} className="flex items-center gap-1 text-sm text-subtle hover:text-ink">
             <ChevronLeft size={14} />
@@ -201,72 +217,94 @@ export default function BidSubmission() {
               <h1 className="text-2xl font-semibold text-ink">Submit your bid</h1>
               <p className="mt-1 text-sm text-subtle">{bid.title}</p>
 
-              <h2 className="mt-8 text-sm font-semibold text-ink">Required documents</h2>
-              <div className="mt-3 space-y-2">
-                {namedDocs.map((doc) => (
-                  <DocumentSlot
-                    key={doc}
-                    label={doc}
-                    file={filesBySlot[doc]}
-                    onChange={(file) => setFilesBySlot((prev) => ({ ...prev, [doc]: file }))}
-                  />
-                ))}
-                {genericCount > 0 && (
-                  <GenericDocsSlot count={genericCount} files={genericFiles} onChange={setGenericFiles} />
-                )}
-              </div>
-
-              {missing && (
-                <div className="mt-4 flex gap-3 rounded-md border border-danger-line bg-danger-soft px-4 py-3">
-                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" />
-                  <div className="text-sm text-danger">
-                    <p className="font-medium">Submission incomplete -- fix these and resubmit:</p>
-                    <ul className="mt-1 list-inside list-disc">
-                      {missing.map((doc) => (
-                        <li key={doc}>{doc}</li>
+              <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
+                <div className="space-y-6 lg:col-span-2">
+                  <div className="rounded-card border border-line bg-elevated p-5">
+                    <h2 className="text-sm font-semibold text-ink">Required documents</h2>
+                    <div className="mt-3 space-y-2">
+                      {namedDocs.map((doc) => (
+                        <DocumentSlot
+                          key={doc}
+                          label={doc}
+                          file={filesBySlot[doc]}
+                          onChange={(file) => setFilesBySlot((prev) => ({ ...prev, [doc]: file }))}
+                        />
                       ))}
-                    </ul>
+                      {genericCount > 0 && (
+                        <GenericDocsSlot count={genericCount} files={genericFiles} onChange={setGenericFiles} />
+                      )}
+                    </div>
+
+                    {missing && (
+                      <div className="mt-4 flex gap-3 rounded-md border border-danger-line bg-danger-soft px-4 py-3">
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" />
+                        <div className="text-sm text-danger">
+                          <p className="font-medium">Submission incomplete -- fix these and resubmit:</p>
+                          <ul className="mt-1 list-inside list-disc">
+                            {missing.map((doc) => (
+                              <li key={doc}>{doc}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-card border border-line bg-elevated p-5">
+                    <h2 className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                      <Lock size={13} className="text-subtle" />
+                      Financial bid
+                    </h2>
+                    <p className="mt-1 text-xs text-subtle">
+                      Upload your price schedule / BOQ as a PDF. It stays sealed and is only opened after the
+                      bid closes -- do not enter a price anywhere else.
+                    </p>
+                    <div className="mt-3">
+                      <DocumentSlot
+                        label="Price schedule (Packet-II)"
+                        file={financialDocument}
+                        onChange={setFinancialDocument}
+                      />
+                    </div>
                   </div>
                 </div>
-              )}
 
-              <h2 className="mt-8 flex items-center gap-1.5 text-sm font-semibold text-ink">
-                <Lock size={13} className="text-subtle" />
-                Financial bid
-              </h2>
-              <p className="mt-1 text-xs text-subtle">
-                Upload your price schedule / BOQ as a PDF. It stays sealed and is only opened after the
-                bid closes -- do not enter a price anywhere else.
-              </p>
-              <div className="mt-3">
-                <DocumentSlot
-                  label="Price schedule (Packet-II)"
-                  file={financialDocument}
-                  onChange={setFinancialDocument}
-                />
+                <div className="lg:col-span-1">
+                  <div className="rounded-card border border-line bg-elevated p-5 lg:sticky lg:top-20">
+                    <h2 className="text-sm font-semibold text-ink">Submission checklist</h2>
+                    <ul className="mt-3 space-y-2.5">
+                      <ProgressItem done={namedSlotsFilled} label={`${namedDocs.length} required document(s)`} />
+                      {genericCount > 0 && (
+                        <ProgressItem done={genericSlotFilled} label={`${genericCount} additional ATC document(s)`} />
+                      )}
+                      <ProgressItem done={!!financialDocument} label="Sealed financial bid" />
+                    </ul>
+
+                    {submitError && (
+                      <p className="mt-4 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+                        {submitError}
+                      </p>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={!canSubmit}
+                      className={`mt-4 w-full rounded-md px-4 py-2.5 text-sm font-medium transition-all duration-200 ${
+                        canSubmit
+                          ? 'bg-accent text-white hover:scale-[1.01] hover:bg-accent-hover'
+                          : 'cursor-not-allowed border border-line bg-surface text-subtle'
+                      }`}
+                    >
+                      {submitting ? 'Submitting...' : 'Submit bid'}
+                    </button>
+                  </div>
+                </div>
               </div>
-
-              {submitError && (
-                <p className="mt-4 rounded-md border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger">
-                  {submitError}
-                </p>
-              )}
-
-              <button
-                type="submit"
-                disabled={!canSubmit}
-                className={`mt-6 w-full rounded-md px-4 py-2.5 text-sm font-medium transition-all duration-200 ${
-                  canSubmit
-                    ? 'bg-accent text-white hover:scale-[1.01] hover:bg-accent-hover'
-                    : 'cursor-not-allowed border border-line bg-surface text-subtle'
-                }`}
-              >
-                {submitting ? 'Submitting...' : 'Submit bid'}
-              </button>
             </form>
           )}
         </main>
-      </div>
+      </Container>
+      <Footer slim />
     </div>
   )
 }

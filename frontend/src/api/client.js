@@ -85,6 +85,16 @@ export function bidDocumentUrl(rfpId) {
   return `${BASE_URL}/bids/${rfpId}/document`
 }
 
+export async function getLegitimacyCheck(rfpId) {
+  const { data } = await client.get(`/bids/${rfpId}/legitimacy-check`)
+  return data.citations
+}
+
+export async function getRfpSummary(rfpId) {
+  const { data } = await client.get(`/bids/${rfpId}/summary`)
+  return data.summary
+}
+
 // Auth required -- a signed-in bidder's own submitted bids and their status.
 export async function getMyBids() {
   const { data } = await client.get('/bidder/my-bids')

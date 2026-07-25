@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
-import { uploadRfp, getStatus, getCriteria, approveCriteria } from '../api/client'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, ChevronRight, FileStack, Files, ScanSearch, ShieldCheck, UploadCloud, UserCheck } from 'lucide-react'
+import { uploadRfp, getStatus, getCriteria, approveCriteria, getMyRfps } from '../api/client'
 import RfpUploadForm from '../components/RfpUploadForm'
 import EvaluationResult from '../components/EvaluationResult'
 import Nav from '../components/Nav'
+import Container from '../components/Container'
+import Footer from '../components/Footer'
+import { KpiCard, KpiStrip } from '../components/KpiStrip'
 
 const POLL_INTERVAL_MS = 4000
 
@@ -37,6 +41,78 @@ function StatusPill({ phase }) {
   )
 }
 
+const RFP_STATUS_META = {
+  published: { label: 'Open', className: 'border-success-line bg-success-soft text-success' },
+  closed: { label: 'Closed', className: 'border-accent/30 bg-accent/10 text-accent' },
+  evaluated: { label: 'Evaluated', className: 'border-line bg-surface text-subtle' },
+}
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function RecentRfpsCard({ rfps }) {
+  return (
+    <div className="rounded-card border border-line bg-elevated p-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-ink">Recent RFPs</h2>
+        <Link to="/buyer/rfps" className="text-xs font-medium text-accent hover:underline">
+          View all
+        </Link>
+      </div>
+      {rfps === null && <p className="mt-3 text-xs text-subtle">Loading...</p>}
+      {rfps?.length === 0 && <p className="mt-3 text-xs text-subtle">Nothing published yet.</p>}
+      {rfps?.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {rfps.slice(0, 5).map((rfp) => {
+            const meta = RFP_STATUS_META[rfp.status] ?? RFP_STATUS_META.published
+            return (
+              <li key={rfp.rfp_id}>
+                <Link
+                  to={`/buyer/rfp/${rfp.rfp_id}`}
+                  className="flex items-center justify-between gap-2 rounded-md border border-line bg-canvas px-3 py-2 transition-colors duration-200 hover:border-accent/40"
+                >
+                  <span className="truncate text-xs font-medium text-ink">{rfp.title}</span>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${meta.className}`}>
+                    {meta.label}
+                  </span>
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+const CHECKPOINT_STEPS = [
+  { icon: UploadCloud, text: 'Upload the tender PDF' },
+  { icon: ScanSearch, text: 'Checked against norms + the RFP’s own rules' },
+  { icon: UserCheck, text: 'You review any flagged criteria' },
+  { icon: ShieldCheck, text: 'Publish — bidders can now apply' },
+]
+
+function CheckpointStepsCard() {
+  return (
+    <div className="rounded-card border border-line bg-elevated p-5">
+      <h2 className="text-sm font-semibold text-ink">Checkpoint A flow</h2>
+      <ul className="mt-3 space-y-3">
+        {CHECKPOINT_STEPS.map((step, i) => (
+          <li key={step.text} className="flex items-start gap-2.5">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent">
+              <step.icon size={12} />
+            </span>
+            <span className="text-xs text-subtle">
+              <span className="font-medium text-ink">{i + 1}.</span> {step.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export default function BuyerDashboard() {
   // idle | uploading | evaluating | success | invalid | error
   const [phase, setPhase] = useState('idle')
@@ -48,6 +124,29 @@ export default function BuyerDashboard() {
   const [startedAt, setStartedAt] = useState(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const pollTimer = useRef(null)
+
+  const [myRfps, setMyRfps] = useState(null)
+  const [flaggedCount, setFlaggedCount] = useState(null)
+
+  async function loadKpis() {
+    try {
+      const rfps = await getMyRfps()
+      setMyRfps(rfps)
+      // Real count, not illustrative -- fetches each RFP's own criteria and
+      // counts flags, same data Checkpoint A itself shows. Capped at the 20
+      // most recent to bound the number of requests on an established account.
+      const sample = rfps.slice(0, 20)
+      const criteriaLists = await Promise.all(sample.map((r) => getCriteria(r.rfp_id).catch(() => ({ criteria: [] }))))
+      const count = criteriaLists.reduce(
+        (sum, { criteria }) => sum + criteria.filter((c) => c.compliance_issue || c.prohibited_practice_issue).length,
+        0,
+      )
+      setFlaggedCount(count)
+    } catch {
+      setMyRfps([])
+      setFlaggedCount(null)
+    }
+  }
 
   function stopPolling() {
     if (pollTimer.current) {
@@ -72,6 +171,7 @@ export default function BuyerDashboard() {
     }
     setRecord({ rfpId: id, criteriaCount: criteria.length })
     setPhase('success')
+    loadKpis()
   }
 
   // A human reviewed the flagged criteria, disagreed with (some of) them, and
@@ -87,6 +187,7 @@ export default function BuyerDashboard() {
     localStorage.removeItem(ACTIVE_EVALUATION_KEY)
     setRecord({ rfpId, criteriaCount: merged.length, overriddenCount: Object.keys(reasoningById).length })
     setPhase('success')
+    loadKpis()
   }
 
   async function pollUntilReady(id) {
@@ -114,6 +215,7 @@ export default function BuyerDashboard() {
   // Resume tracking an in-flight evaluation after navigation/reload instead
   // of showing a blank upload form for an RFP that's still being processed.
   useEffect(() => {
+    loadKpis()
     const stored = localStorage.getItem(ACTIVE_EVALUATION_KEY)
     if (!stored) return
     const { rfpId: storedId, startedAt: storedStartedAt } = JSON.parse(stored)
@@ -162,11 +264,15 @@ export default function BuyerDashboard() {
     setElapsedSeconds(0)
   }
 
+  const publishedCount = myRfps?.filter((r) => r.status !== 'draft').length ?? null
+  const openCount = myRfps?.filter((r) => r.status === 'published').length ?? null
+  const totalBids = myRfps?.reduce((sum, r) => sum + r.bid_count, 0) ?? null
+
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="flex min-h-screen flex-col bg-canvas text-ink">
       <Nav />
 
-      <div className="mx-auto max-w-3xl px-6">
+      <Container className="flex-1">
         <div className="flex items-center justify-between border-b border-line py-4">
           <div className="flex items-center gap-2 text-sm text-subtle">
             <span className="font-medium text-ink">Buyer</span>
@@ -183,24 +289,53 @@ export default function BuyerDashboard() {
             before it&apos;s published.
           </p>
 
-          <div className="mt-8">
-            {phase === 'idle' ? (
-              <RfpUploadForm onSubmit={handleFileSubmit} />
-            ) : (
-              <EvaluationResult
-                phase={phase}
-                rfpId={rfpId}
-                record={record}
-                flaggedCriteria={flaggedCriteria}
-                errorMessage={errorMessage}
-                elapsedLabel={startedAt ? formatElapsed(elapsedSeconds) : null}
-                onReset={reset}
-                onPublishWithOverrides={publishWithOverrides}
+          <div className="mt-6">
+            <KpiStrip>
+              <KpiCard icon={FileStack} label="My RFPs" value={publishedCount ?? '—'} index={0} />
+              <KpiCard icon={ShieldCheck} label="Currently open" value={openCount ?? '—'} index={1} />
+              <KpiCard
+                icon={Files}
+                label="Bids received"
+                value={totalBids ?? '—'}
+                context="across all your RFPs"
+                index={2}
               />
-            )}
+              <KpiCard
+                icon={AlertTriangle}
+                label="Flagged criteria"
+                value={flaggedCount ?? '—'}
+                context={myRfps?.length > 20 ? 'across 20 most recent RFPs' : 'across all your RFPs'}
+                index={3}
+              />
+            </KpiStrip>
+          </div>
+
+          <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              {phase === 'idle' ? (
+                <RfpUploadForm onSubmit={handleFileSubmit} />
+              ) : (
+                <EvaluationResult
+                  phase={phase}
+                  rfpId={rfpId}
+                  record={record}
+                  flaggedCriteria={flaggedCriteria}
+                  errorMessage={errorMessage}
+                  elapsedLabel={startedAt ? formatElapsed(elapsedSeconds) : null}
+                  onReset={reset}
+                  onPublishWithOverrides={publishWithOverrides}
+                />
+              )}
+            </div>
+            <div className="space-y-6">
+              <RecentRfpsCard rfps={myRfps} />
+              <CheckpointStepsCard />
+            </div>
           </div>
         </main>
-      </div>
+      </Container>
+
+      <Footer slim />
     </div>
   )
 }

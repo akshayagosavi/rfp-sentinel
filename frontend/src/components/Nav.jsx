@@ -25,13 +25,11 @@ export default function Nav({ children }) {
 
   return (
     <header
-      className={`sticky top-0 z-50 transition-all duration-300 ${
-        scrolled
-          ? 'border-b border-line bg-canvas/70 backdrop-blur-md'
-          : 'border-b border-transparent bg-transparent'
+      className={`sticky top-0 z-50 border-b border-line transition-all duration-300 ${
+        scrolled ? 'bg-canvas/70 backdrop-blur-md' : 'bg-transparent'
       }`}
     >
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-8">
         <Link
           to="/"
           className="flex items-center gap-2 text-lg font-semibold tracking-tight text-ink transition-opacity duration-200 hover:opacity-80"

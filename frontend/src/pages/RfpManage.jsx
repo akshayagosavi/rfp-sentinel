@@ -22,6 +22,8 @@ import {
   runL1Selection,
 } from '../api/client'
 import Nav from '../components/Nav'
+import Container from '../components/Container'
+import Footer from '../components/Footer'
 
 const POLL_INTERVAL_MS = 4000
 
@@ -210,10 +212,10 @@ export default function RfpManage() {
   }
 
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="flex min-h-screen flex-col bg-canvas text-ink">
       <Nav />
 
-      <div className="mx-auto max-w-3xl px-6">
+      <Container className="flex-1">
         <div className="flex items-center gap-2 border-b border-line py-4 text-sm text-subtle">
           <Link to="/buyer/rfps" className="flex items-center gap-1 hover:text-ink">
             <ChevronLeft size={14} />
@@ -282,9 +284,9 @@ export default function RfpManage() {
                     </p>
                   )}
 
-                  <ul className="mt-4 space-y-3">
+                  <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
                     {evaluation?.bids.map((b) => (
-                      <li key={b.bid_id} className="rounded-card border border-line bg-elevated p-4">
+                      <div key={b.bid_id} className="rounded-card border border-line bg-elevated p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <p className="text-sm font-medium text-ink">{b.bidder_org}</p>
@@ -319,9 +321,9 @@ export default function RfpManage() {
                             ))}
                           </div>
                         )}
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
 
                   {bid.status === 'closed' &&
                     !awaitingStage2.current &&
@@ -545,7 +547,9 @@ export default function RfpManage() {
             </>
           )}
         </main>
-      </div>
+      </Container>
+
+      <Footer slim />
     </div>
   )
 }
