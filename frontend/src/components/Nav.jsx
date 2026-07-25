@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ShieldCheck } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 import ThemeToggle from './ThemeToggle'
+import LoginMenu from './LoginMenu'
+import AccountMenu from './AccountMenu'
 
+// Every page renders this same Nav -- the auth-aware Login/Account menu
+// lives here, once, instead of every page individually computing
+// `isAuthenticated ? <AccountMenu /> : <LoginMenu />` (the inconsistency
+// that caused some pages, like the admin stub, to have no menu at all).
+// `children` is only for page-specific EXTRA links (e.g. "Browse Bids" on
+// the landing page) -- the account/login menu is automatic, never passed in.
 export default function Nav({ children }) {
   const [scrolled, setScrolled] = useState(false)
+  const { isAuthenticated } = useAuth()
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8)
@@ -32,6 +42,7 @@ export default function Nav({ children }) {
         <div className="flex items-center gap-4">
           <ThemeToggle />
           {children}
+          {isAuthenticated ? <AccountMenu /> : <LoginMenu />}
         </div>
       </div>
     </header>

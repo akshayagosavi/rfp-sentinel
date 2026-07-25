@@ -33,6 +33,15 @@ _REQUIRED_DOCS_LABEL = "Document required from seller"
 _PROHIBITED_PRACTICES_START = "shall be treated as null and void"
 _PROHIBITED_PRACTICES_END = "Further, if any seller has any objection"
 
+# GeM's own bid number, e.g. "GEM/2024/B/5735766" -- the real, official
+# reference a bidder would actually search by on GeM itself, distinct from
+# our own internal rfp_id (a random hex string, our database key, never
+# shown to GeM). Confirmed as a unique, unambiguous match in the real
+# NIELIT RFP -- appears exactly once in the whole document, right next to
+# a "Bid Number" label, so a direct pattern match is reliable without
+# needing a bounded label-window like the other two extractions below.
+_GEM_BID_NUMBER_PATTERN = re.compile(r"GEM/\d{4}/[A-Z]/\d+")
+
 _MIN_WORDS = 15  # skip tiny fragments that aren't real criteria
 
 # Candidates (and, within a candidate, mandatory/category checks) are
@@ -125,6 +134,20 @@ def _infer_category(text: str) -> str:
     return result.verdict
 
 
+def _extract_gem_bid_number(pdf_path: Path) -> str | None:
+    """Returns None if not found -- not every RFP uploaded to this platform
+    will necessarily be a real, already-published GeM listing (e.g. a buyer
+    drafting a brand-new tender that only exists here first), so a missing
+    bid number is a legitimate outcome, not an error."""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            match = _GEM_BID_NUMBER_PATTERN.search(text)
+            if match:
+                return match.group(0)
+    return None
+
+
 def _extract_required_documents(pdf_path: Path) -> list[str]:
     """GeM's bilingual "Bid Details" table lists the document TYPES a bidder
     must submit (e.g. "Experience Criteria", "Past Performance") as a
@@ -206,6 +229,60 @@ def _extract_prohibited_practices(pdf_path: Path) -> list[str]:
         return [x for x in items if x]
 
 
+_EVALUATION_METHOD_LABEL = "Evaluation Method"
+
+
+def _extract_evaluation_method(pdf_path: Path) -> str:
+    """GeM's "Evaluation Method" field states how the buyer will pick a
+    winner. Confirmed against the real RFP as "Total value wise evaluation"
+    -- GeM's own phrase for L1 (lowest total price wins). Defaults to L1
+    if the label isn't found or its value doesn't clearly say QCBS --
+    L1 is the only value seen in real documents so far, and was already
+    this project's universal default before this extraction existed, so a
+    missed/ambiguous match degrades to the existing safe behavior, not a
+    new failure mode."""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            idx = text.find(_EVALUATION_METHOD_LABEL)
+            if idx == -1:
+                continue
+            segment = text[idx : idx + 200]
+            segment = re.sub(r"\(cid:\d+\)", "", segment)
+            segment = re.sub(r"[^\x00-\x7F]", "", segment)
+            if re.search(r"QCBS|Quality\s+and\s+Cost", segment, re.IGNORECASE):
+                return "QCBS"
+            return "L1"
+    return "L1"
+
+
+# GeM's standard MSE purchase-preference paragraph (citing OM No.
+# F.1/4/2021-PPD) states two RFP-specific numbers in sequence, both
+# formatted as "N% (Selected by Buyer)" -- confirmed against the real RFP
+# text: the price band a non-L1 MSE bidder must be within to get a
+# price-match offer ("L-1+ 15% (Selected by Buyer)"), then the percentage
+# of quantity awarded if they take it ("25% (selected by Buyer) percentage
+# of total quantity"). Case varies between the two ("Selected"/"selected"
+# in the real document), hence re.IGNORECASE.
+_MSE_PRICE_BAND_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*\(selected by buyer\)", re.IGNORECASE)
+
+
+def _extract_mse_preference_params(pdf_path: Path) -> tuple[float | None, float | None]:
+    """Returns (price_band_percent, mse_share_percent), or (None, None) if
+    the paragraph isn't found or doesn't match this exact two-number
+    pattern -- not every RFP necessarily overrides the general 2012 Policy
+    Order default with its own numbers, and guessing at a value nobody
+    stated would be worse than leaving it unset (score_stage2 already
+    handles a None here gracefully, skipping the price-match calculation
+    rather than guessing)."""
+    with pdfplumber.open(pdf_path) as pdf:
+        full_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
+    matches = _MSE_PRICE_BAND_PATTERN.findall(full_text)
+    if len(matches) >= 2:
+        return float(matches[0]), float(matches[1])
+    return None, None
+
+
 def _normalize_for_matching(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
@@ -283,14 +360,22 @@ def extract_rfp_criteria(pdf_path: Path, rfp_id: str) -> StructuredRFP:
     ]
 
     required_documents = _extract_required_documents(pdf_path)
+    gem_bid_number = _extract_gem_bid_number(pdf_path)
+    evaluation_method = _extract_evaluation_method(pdf_path)
+    price_band_percent, mse_share_percent = _extract_mse_preference_params(pdf_path)
     logger.info(
-        "extract_rfp_criteria(rfp_id=%r) done: %d criteria, %d required documents, %d prohibited practices",
-        rfp_id, len(criteria), len(required_documents), len(prohibited_practices),
+        "extract_rfp_criteria(rfp_id=%r) done: %d criteria, %d required documents, "
+        "%d prohibited practices, gem_bid_number=%r, evaluation_method=%r, "
+        "price_band_percent=%r, mse_share_percent=%r",
+        rfp_id, len(criteria), len(required_documents), len(prohibited_practices), gem_bid_number,
+        evaluation_method, price_band_percent, mse_share_percent,
     )
 
     return StructuredRFP(
         rfp_id=rfp_id, source_file=pdf_path.name, criteria=criteria,
         required_documents=required_documents, prohibited_practices=prohibited_practices,
+        gem_bid_number=gem_bid_number, evaluation_method=evaluation_method,
+        price_band_percent=price_band_percent, mse_share_percent=mse_share_percent,
     )
 
 

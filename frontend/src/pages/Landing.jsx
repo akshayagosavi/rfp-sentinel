@@ -9,6 +9,9 @@ import {
   ScanSearch,
   UserCheck,
   CheckCircle2,
+  FileUp,
+  ClipboardCheck,
+  Trophy,
   Scale,
   UserCog,
   FileSearch,
@@ -44,7 +47,7 @@ const STEPS = [
     icon: ScanSearch,
     title: 'Checked against norms',
     description:
-      'Validated against six government procurement norms (GFR 2017, GeM GTC, Make-in-India, MeitY CRS, BIS CRS, MSME policy).',
+      'Validated against government procurement norms (GFR 2017, GeM GTC, Make-in-India, MeitY CRS, MSME policy) and the RFP’s own rules.',
   },
   {
     icon: UserCheck,
@@ -53,8 +56,23 @@ const STEPS = [
   },
   {
     icon: CheckCircle2,
-    title: 'Publish with confidence',
-    description: 'Compliant RFPs are published and stored; issues are flagged with reasons.',
+    title: 'Published',
+    description: 'Bidders can now browse it and see exactly what to submit.',
+  },
+  {
+    icon: FileUp,
+    title: 'Bidders apply',
+    description: 'Sellers submit required documents; missing or misnamed files are flagged immediately.',
+  },
+  {
+    icon: ClipboardCheck,
+    title: 'Evaluated after close',
+    description: 'Every submission is checked against the approved criteria once bidding closes.',
+  },
+  {
+    icon: Trophy,
+    title: 'Shortlist confirmed',
+    description: 'Evaluator reviews the ranked results and confirms the outcome.',
   },
 ]
 
@@ -66,8 +84,8 @@ const FEATURES = [
   },
   {
     icon: UserCog,
-    title: 'Built for the evaluator',
-    description: 'A co-pilot for the assigned Technical Evaluator, not the bidder side.',
+    title: 'Built for both sides of the tender',
+    description: 'Deep evaluation tools for the buyer, plus a clear summary and submission checklist for bidders.',
   },
   {
     icon: FileSearch,
@@ -107,21 +125,15 @@ export default function Landing() {
     <div className="min-h-screen bg-canvas text-ink">
       <GradientBackdrop />
       <Nav>
-        <Link
-          to="/bidder/login"
-          className="text-sm font-medium text-subtle transition-colors duration-200 hover:text-ink"
-        >
-          Bidder Login
+        <Link to="/bids" className="text-sm font-medium text-subtle transition-colors duration-200 hover:text-ink">
+          Browse Bids
         </Link>
-        <Link
-          to="/login"
-          className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white transition-all duration-200 hover:scale-[1.03] hover:bg-accent-hover hover:shadow-[0_0_24px_-6px_var(--color-accent)]"
-        >
-          Buyer Login
+        <Link to="/about" className="text-sm font-medium text-subtle transition-colors duration-200 hover:text-ink">
+          About
         </Link>
       </Nav>
 
-      <main className="mx-auto max-w-3xl px-6 pt-16 pb-12 text-center">
+      <main className="mx-auto flex min-h-[calc(100vh-73px)] max-w-3xl flex-col items-center justify-center px-6 pb-16 text-center">
         <motion.div
           variants={reduceMotion ? undefined : heroContainer}
           initial={reduceMotion ? undefined : 'hidden'}
@@ -140,14 +152,6 @@ export default function Landing() {
             RFP Sentinel checks tenders and bids against government procurement norms
             automatically, so evaluators spend their time on judgment calls, not paperwork.
           </motion.p>
-          <motion.div variants={reduceMotion ? undefined : heroItem} className="mt-10">
-            <Link
-              to="/login"
-              className="rounded-full bg-accent px-6 py-3 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:bg-accent-hover hover:shadow-[0_0_28px_-6px_var(--color-accent)]"
-            >
-              Get started as a buyer
-            </Link>
-          </motion.div>
         </motion.div>
       </main>
 
@@ -186,30 +190,26 @@ export default function Landing() {
         <div className="mx-auto max-w-5xl px-6">
           <SectionHeading
             title="How it works"
-            subtitle="From upload to a published, defensible RFP."
+            subtitle="The full flow, from upload to a confirmed shortlist."
             reduceMotion={reduceMotion}
           />
-          <div className="mt-14 flex flex-col gap-10 sm:flex-row sm:items-start sm:gap-0">
+          <div className="mt-14 grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-4">
             {STEPS.map((step, i) => (
-              <div key={step.title} className="flex flex-1 flex-col items-center sm:flex-row sm:items-start">
-                <motion.div
-                  initial={reduceMotion ? undefined : { opacity: 0, y: 20 }}
-                  whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-                  viewport={{ once: true, amount: 0.4 }}
-                  transition={{ duration: 0.4, ease: 'easeOut', delay: reduceMotion ? 0 : i * 0.1 }}
-                  className="flex flex-col items-center px-2 text-center"
-                >
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-line bg-elevated text-accent">
-                    <step.icon size={20} />
-                  </span>
-                  <span className="mt-3 text-xs font-medium text-subtle">Step {i + 1}</span>
-                  <h3 className="mt-1 text-sm font-semibold text-ink">{step.title}</h3>
-                  <p className="mt-2 max-w-[13rem] text-sm text-subtle">{step.description}</p>
-                </motion.div>
-                {i < STEPS.length - 1 && (
-                  <div className="mx-2 mt-6 hidden h-px flex-1 border-t border-dashed border-line sm:block" />
-                )}
-              </div>
+              <motion.div
+                key={step.title}
+                initial={reduceMotion ? undefined : { opacity: 0, y: 20 }}
+                whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.4 }}
+                transition={{ duration: 0.4, ease: 'easeOut', delay: reduceMotion ? 0 : i * 0.06 }}
+                className="flex flex-col items-center px-2 text-center"
+              >
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-line bg-elevated text-accent">
+                  <step.icon size={20} />
+                </span>
+                <span className="mt-3 text-xs font-medium text-subtle">Step {i + 1}</span>
+                <h3 className="mt-1 text-sm font-semibold text-ink">{step.title}</h3>
+                <p className="mt-2 text-sm text-subtle">{step.description}</p>
+              </motion.div>
             ))}
           </div>
         </div>
@@ -239,29 +239,6 @@ export default function Landing() {
             ))}
           </div>
         </div>
-      </section>
-
-      {/* Closing CTA band */}
-      <section className="border-t border-line bg-gradient-to-r from-accent/5 via-accent/10 to-accent/5">
-        <motion.div
-          initial={reduceMotion ? undefined : { opacity: 0, y: 16 }}
-          whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.5 }}
-          transition={{ duration: 0.4, ease: 'easeOut' }}
-          className="mx-auto max-w-3xl px-6 py-16 text-center"
-        >
-          <h2 className="text-2xl font-semibold tracking-tight text-ink">
-            Ready to evaluate with confidence?
-          </h2>
-          <div className="mt-6">
-            <Link
-              to="/login"
-              className="rounded-full bg-accent px-6 py-3 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:bg-accent-hover hover:shadow-[0_0_28px_-6px_var(--color-accent)]"
-            >
-              Get started as a buyer
-            </Link>
-          </div>
-        </motion.div>
       </section>
 
       {/* Footer */}

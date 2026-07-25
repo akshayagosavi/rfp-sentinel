@@ -11,4 +11,5 @@ uvicorn>=0.29
 python-multipart>=0.0.9
 streamlit>=1.35
 pyjwt>=2.8
+bcrypt>=4.1
 pytest>=8.0

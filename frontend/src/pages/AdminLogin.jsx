@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import Nav from '../components/Nav'
 import GradientBackdrop from '../components/GradientBackdrop'
 
-export default function BuyerLogin() {
+export default function AdminLogin() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
@@ -21,7 +21,7 @@ export default function BuyerLogin() {
     setSubmitting(true)
     try {
       await login(email, password)
-      navigate('/buyer/dashboard')
+      navigate('/admin/dashboard')
     } catch {
       setError('Invalid email or password.')
     } finally {
@@ -45,8 +45,8 @@ export default function BuyerLogin() {
             <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-accent">
               <ShieldCheck size={20} />
             </span>
-            <h1 className="mt-4 text-xl font-semibold text-ink">Buyer Login</h1>
-            <p className="mt-1 text-sm text-subtle">Sign in to evaluate and publish RFPs.</p>
+            <h1 className="mt-4 text-xl font-semibold text-ink">Admin Login</h1>
+            <p className="mt-1 text-sm text-subtle">Sign in to manage the norm knowledge base.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">

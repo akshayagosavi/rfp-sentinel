@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { useAuth } from '../context/AuthContext'
 import { uploadRfp, getStatus, getCriteria, approveCriteria } from '../api/client'
 import RfpUploadForm from '../components/RfpUploadForm'
 import EvaluationResult from '../components/EvaluationResult'
@@ -39,7 +38,6 @@ function StatusPill({ phase }) {
 }
 
 export default function BuyerDashboard() {
-  const { logout } = useAuth()
   // idle | uploading | evaluating | success | invalid | error
   const [phase, setPhase] = useState('idle')
   const [rfpId, setRfpId] = useState(null)
@@ -166,14 +164,7 @@ export default function BuyerDashboard() {
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
-      <Nav>
-        <button
-          onClick={logout}
-          className="text-sm text-subtle transition-colors duration-200 hover:text-ink"
-        >
-          Sign out
-        </button>
-      </Nav>
+      <Nav />
 
       <div className="mx-auto max-w-3xl px-6">
         <div className="flex items-center justify-between border-b border-line py-4">

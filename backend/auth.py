@@ -1,38 +1,74 @@
 """
-Minimal v1 login: hardcoded per-role credentials (env-configured), JWT
-issued on success carrying the role. No password hashing, no `users`
-table -- a documented shortcut for the demo, not production-grade auth.
-Real multi-user credential auth (Postgres `users`, hashed passwords) is
-v1.1 scope per the plan; this exists only so each dashboard has a real
-login round-trip to show, not a client-side fake.
+Role-aware login backed by a real Postgres `users` table (see db.py) --
+real password hashing (bcrypt), since these are now real accounts a
+person creates via signup, not one hardcoded demo credential where
+hashing would be theater. JWT still carries the role, same as before;
+only how a credential gets verified changed.
 """
 import os
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 import jwt
+import psycopg
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from psycopg_pool import ConnectionPool
 
 SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-only-secret-change-me")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
-BUYER_EMAIL = os.getenv("BUYER_EMAIL", "buyer@rfpsentinel.local")
-BUYER_PASSWORD = os.getenv("BUYER_PASSWORD", "changeme")
-BIDDER_EMAIL = os.getenv("BIDDER_EMAIL", "bidder@rfpsentinel.local")
-BIDDER_PASSWORD = os.getenv("BIDDER_PASSWORD", "changeme")
-
 _bearer = HTTPBearer()
 
 
-def authenticate(email: str, password: str) -> str | None:
-    """Returns the matched role ("buyer"/"bidder"), or None if no
-    credential pair matches."""
-    if email == BUYER_EMAIL and password == BUYER_PASSWORD:
-        return "buyer"
-    if email == BIDDER_EMAIL and password == BIDDER_PASSWORD:
-        return "bidder"
-    return None
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode(), password_hash.encode())
+
+
+def authenticate_user(pool: ConnectionPool, email: str, password: str) -> dict | None:
+    """Returns the user record (id, role, org_name, is_active) on success,
+    None on any credential failure -- wrong email and wrong password look
+    identical to the caller, standard practice so a login attempt can't be
+    used to probe which emails exist. is_active is checked by the caller
+    (backend/api/auth.py's login endpoint), not here -- credentials are
+    verified first regardless of active status, so a wrong-password guess
+    against a deactivated account still reads as "invalid credentials,"
+    not "deactivated," avoiding a second way to leak account status."""
+    with pool.connection() as conn:
+        row = conn.execute(
+            "SELECT id, password_hash, role, org_name, is_active FROM users WHERE email = %s", (email,)
+        ).fetchone()
+    if row is None:
+        return None
+    user_id, password_hash, role, org_name, is_active = row
+    if not verify_password(password, password_hash):
+        return None
+    return {"id": user_id, "role": role, "org_name": org_name, "is_active": is_active}
+
+
+def create_bidder(pool: ConnectionPool, email: str, password: str, org_name: str, gem_seller_proof: str | None) -> int:
+    """Signup is deliberately simple: no verification that gem_seller_proof
+    is a real GeM registration -- once this integrates with real GeM seller
+    identity, this is the field that check would validate against. For now
+    it's stored as-provided, a placeholder, not a security control."""
+    with pool.connection() as conn:
+        try:
+            row = conn.execute(
+                """
+                INSERT INTO users (email, password_hash, role, org_name, gem_seller_proof)
+                VALUES (%s, %s, 'bidder', %s, %s)
+                RETURNING id
+                """,
+                (email, hash_password(password), org_name, gem_seller_proof),
+            ).fetchone()
+        except psycopg.errors.UniqueViolation:
+            raise ValueError("An account with this email already exists")
+    return row[0]
 
 
 def create_access_token(email: str, role: str) -> str:
@@ -59,3 +95,16 @@ def get_current_bidder(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -
     if payload.get("role") != "bidder":
         raise HTTPException(403, "Bidder role required")
     return payload["sub"]
+
+
+def get_current_admin(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    payload = _decode(creds)
+    if payload.get("role") != "admin":
+        raise HTTPException(403, "Admin role required")
+    return payload["sub"]
+
+
+def get_current_user_email(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """Any authenticated role -- for endpoints like /auth/me that aren't
+    role-specific, unlike get_current_buyer/get_current_bidder above."""
+    return _decode(creds)["sub"]

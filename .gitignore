@@ -1,12 +1,30 @@
+# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
+*.egg-info/
+
+# Env
 .env
 
+# Node / frontend -- frontend/ has its own Vite-generated .gitignore too,
+# but this shouldn't rely on that alone; kept explicit here as well.
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Project-specific
 data/bids/**
 !data/bids/.gitkeep
-
-.DS_Store
 
 logs/

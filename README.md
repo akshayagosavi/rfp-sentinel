@@ -181,13 +181,13 @@ Wait for the `Local: http://localhost:5173/` line.
 
 **Then:** open **http://localhost:5173**. Buyer flow: log in as buyer, upload an RFP PDF. Bidder flow: log in as bidder, browse published RFPs and their required-documents checklists.
 
-### Authentication (v1 shortcut)
+### Authentication
 
-Two hardcoded demo credentials, one per role, each issuing a real JWT with the role baked in:
-- Buyer: `buyer@rfpsentinel.local` / `changeme` (`BUYER_EMAIL` / `BUYER_PASSWORD` in `.env`)
-- Bidder: `bidder@rfpsentinel.local` / `changeme` (`BIDDER_EMAIL` / `BIDDER_PASSWORD` in `.env`)
+Real accounts now, backed by a Postgres `users` table (`backend/db.py`) with bcrypt-hashed passwords — this replaced the earlier env-var-only shortcut once real seller signup was needed.
+- **Buyer**: one demo account, seeded automatically on startup from `BUYER_EMAIL` / `BUYER_PASSWORD` in `.env` (default `buyer@rfpsentinel.local` / `changeme`). Buyer signup isn't built yet — still one account.
+- **Bidder**: real self-signup via `POST /auth/signup/bidder` (email, password, org name, and an optional `gem_seller_proof` field). That field is deliberately unvalidated for now — a placeholder for real GeM seller-identity integration later, not a security control; anyone can sign up and enter anything there today.
 
-No password hashing, no `users` table — deliberate, documented v1 scope-cut, not a hidden gap; real multi-user auth is v1.1 (see `ROADMAP.md`).
+Still v1-scoped: no email verification, no password reset, no admin account/login yet (see `ROADMAP.md`).
 
 ### If something goes wrong mid-evaluation
 

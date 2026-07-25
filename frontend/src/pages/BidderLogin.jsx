@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Handshake } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
@@ -95,7 +95,10 @@ export default function BidderLogin() {
           </form>
 
           <p className="mt-6 text-center text-xs text-subtle">
-            v1 demo credentials come from the backend&apos;s BIDDER_EMAIL / BIDDER_PASSWORD env vars.
+            New seller?{' '}
+            <Link to="/bidder/signup" className="font-medium text-accent hover:underline">
+              Create an account
+            </Link>
           </p>
         </motion.div>
       </div>
