@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-accent: #5b4be5;
+  --color-accent-hover: #4c3dd1;
+
+  --color-canvas: #ffffff;
+  --color-elevated: #fbfbfd;
+  --color-surface: rgba(0, 0, 0, 0.02);
+  --color-line: rgba(0, 0, 0, 0.09);
+  --color-ink: #18181b;
+  --color-subtle: #6b7280;
+
+  --color-success: #16a34a;
+  --color-success-soft: #f0fdf4;
+  --color-success-line: rgba(22, 163, 74, 0.25);
+
+  --color-danger: #dc2626;
+  --color-danger-soft: #fef2f2;
+  --color-danger-line: rgba(220, 38, 38, 0.25);
+
+  --radius-card: 0.75rem;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+.dark {
+  --color-canvas: #0a0a0f;
+  --color-elevated: #111116;
+  --color-surface: rgba(255, 255, 255, 0.04);
+  --color-line: rgba(255, 255, 255, 0.09);
+  --color-ink: #f4f4f5;
+  --color-subtle: #9ca3af;
+
+  --color-success: #4ade80;
+  --color-success-soft: rgba(34, 197, 94, 0.1);
+  --color-success-line: rgba(74, 222, 128, 0.25);
+
+  --color-danger: #f87171;
+  --color-danger-soft: rgba(239, 68, 68, 0.12);
+  --color-danger-line: rgba(248, 113, 113, 0.3);
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.bg-dot-grid {
+  background-image: radial-gradient(var(--color-line) 1px, transparent 1px);
+  background-size: 24px 24px;
+}

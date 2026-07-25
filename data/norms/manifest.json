@@ -23,6 +23,32 @@
       "version": "2012",
       "effective_date": "2012-04-01",
       "_verify": "This is only the original 2012 base order. Confirmed via the official Gazette (S.O. 5670(E), 9 Nov 2018) that a 2018 Amendment Order changed the procurement target from 20% to 25% and added a 3% women-owned-MSE sub-target, effective 1 April 2019 — not yet sourced/ingested as a separate document. See ROADMAP.md."
+    },
+    {
+      "filename": "GFR2017.pdf",
+      "norm_name": "GFR 2017 Chapter 6 (Procurement of Goods and Services)",
+      "status": "active",
+      "version": "2017",
+      "effective_date": "2017-03-07",
+      "page_range": [40, 56],
+      "_verify": "Full document is 208 pages covering all of government financial management (budgeting, accounts, audit, etc.) -- only Chapter 6 (pages 40-56) is about procurement/Rule 189 two-packet bidding, so only that chapter is ingested. Deliberate scope cut, not a missed page range."
+    },
+    {
+      "filename": "f0c7888ca28a668db5334f15e4e2a99a.pdf",
+      "norm_name": "DPIIT Public Procurement (Preference to Make in India) Order 2017",
+      "status": "active",
+      "version": "2020-06-04",
+      "effective_date": "2020-06-04",
+      "use_text_flow": true,
+      "_verify": "This PDF renders every line twice for a fake-bold effect; pdfplumber's default extract_text() interleaves both passes character-by-character, doubling every letter ('NNoo..'). use_text_flow=True fixes it -- verified against the raw character stream, not just eyeballed. The 2020-09-15 order (below) only amends specific paragraphs (2,3,5,10,13) of this one -- both stay active simultaneously, neither supersedes the other wholesale."
+    },
+    {
+      "filename": "b0b4d27d65a0fc55c918c693e9f24b2a.pdf",
+      "norm_name": "DPIIT Public Procurement (Preference to Make in India) Order 2017",
+      "status": "active",
+      "version": "2020-09-15",
+      "effective_date": "2020-09-15",
+      "_verify": "Partial amendment of paras 2, 3, 5, 10 & 13 of the 2020-06-04 revision above -- both versions of this norm_name stay active, since this one doesn't replace the whole document."
     }
   ]
 }

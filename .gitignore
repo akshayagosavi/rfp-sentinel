@@ -8,3 +8,5 @@ data/bids/**
 !data/bids/.gitkeep
 
 .DS_Store
+
+logs/

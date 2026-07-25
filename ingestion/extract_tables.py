@@ -21,11 +21,17 @@ class PageTable:
 
 
 def extract_tables_by_page(
-    pdf_path: Path, table_settings: dict | None = None
+    pdf_path: Path,
+    table_settings: dict | None = None,
+    page_range: tuple[int, int] | None = None,
 ) -> list[PageTable]:
+    """page_range (1-indexed, inclusive) -- see extract_text_by_page()."""
     tables = []
     with pdfplumber.open(pdf_path) as pdf:
+        start, end = page_range if page_range else (1, len(pdf.pages))
         for page_num, page in enumerate(pdf.pages, start=1):
+            if page_num < start or page_num > end:
+                continue
             found = page.extract_tables(table_settings=table_settings)
             for idx, rows in enumerate(found):
                 tables.append(PageTable(page_number=page_num, table_index=idx, rows=rows))

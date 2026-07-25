@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-from backend.rag.embeddings import embed_texts
+from backend.rag.embeddings import embed_texts_safely
 from backend.rag.qdrant_client import ensure_norms_collection, get_client, upsert_chunks
 from ingestion.chunker import chunk_document
 from ingestion.extract_tables import extract_tables_by_page
@@ -37,13 +37,17 @@ def doc_id_for(entry: dict) -> str:
 def ingest_document(client, entry: dict) -> int:
     """Runs the full pipeline for one manifest entry. Returns chunk count."""
     pdf_path = NORMS_DIR / entry["filename"]
+    page_range = tuple(entry["page_range"]) if entry.get("page_range") else None
 
-    pages = extract_text_by_page(pdf_path)
+    pages = extract_text_by_page(
+        pdf_path, use_text_flow=entry.get("use_text_flow", False), page_range=page_range
+    )
     pages = [PageText(p.page_number, filter_english(p.text)) for p in pages]
-    tables = extract_tables_by_page(pdf_path)
+    tables = extract_tables_by_page(pdf_path, page_range=page_range)
 
     chunks = chunk_document(pages, tables)
-    vectors = embed_texts([c.text for c in chunks])
+    kept_indices, vectors = embed_texts_safely([c.text for c in chunks])
+    chunks = [chunks[i] for i in kept_indices]
 
     doc_metadata = {
         "source_file": entry["filename"],
