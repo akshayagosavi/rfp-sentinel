@@ -2,10 +2,16 @@
 
 A RAG-based bid-evaluation co-pilot for GeM (Government e-Marketplace) procurement, scoped to the **Electronics category**. Its core differentiator is the **buyer/evaluator side** of government procurement — every commercial RFP-AI tool on the market serves bidders responding to tenders; this is the other side of that transaction, a gap in the market. On top of that, it's grown into a full three-role platform: buyers publish and evaluate RFPs, bidders browse and submit against them, and admins manage the norm knowledge base, user accounts, and buyer-conduct oversight.
 
-<img width="1920" height="925" alt="image" src="https://github.com/user-attachments/assets/67c1c3d5-fa5d-4ad4-abef-d9c7a15bff84" />
-<img width="1920" height="925" alt="image" src="https://github.com/user-attachments/assets/1c7aa3a2-8ec6-42e9-9060-bbd0ad67d606" />
-<img width="1920" height="925" alt="image" src="https://github.com/user-attachments/assets/7067c59d-22d3-4514-a54a-95d8f30c4e5d" />
-<img width="1920" height="925" alt="Screenshot from 2026-07-21 23-44-49" src="https://github.com/user-attachments/assets/eff4c7bf-ad7a-4f69-8262-173019011d2d" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/c6677a02-f9ad-4b59-8cb5-6d8e3ae86bc3" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/b564e111-460e-4daf-b8b2-9016c4bbf387" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/8c3c932d-399b-45ed-9eeb-8afdc16c7202" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/4b6bdeb2-1fe3-4b24-8724-e1f7fb741acc" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/aff9b1d0-b332-424e-bff5-e5f6c95691f4" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/7a3a031c-691d-45c6-8382-d2f23e1cb79c" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/4e58c42a-2001-426c-b5d6-0bb2e5c50eb4" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/1b81ece3-0aa3-4df3-862b-a85f30587e2d" />
+<img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/50139c4e-141e-45ad-b55e-b89092649b79" />
+
 
 A buyer uploads an RFP/tender PDF. The system extracts its requirements, checks them against a knowledge base of real government procurement norms (GeM's GTC, the MSME Public Procurement Policy, GFR 2017, DPIIT Make-in-India orders, MeitY's CRS handbook), separately checks the RFP against **its own** listed buyer drafting-mistakes, flags anything that conflicts with a citation, and pauses for a human to review (with a mandatory, server-enforced justification for publishing anyway) before anything goes live. Bidders browse and apply publicly, submit documents under a blocking completeness check, and get a sealed financial bid (Packet-II never opened until the technical gate closes). Once the RFP closes — automatically on its deadline, or on a buyer's manual override — Stage 1 checks every bid's technical documents against the approved criteria and gates pass/fail; Stage 2 (triggered separately, mirroring the real two-envelope principle) reads sealed prices and ranks by L1 or QCBS, with MSE purchase-preference price-matching and GeM's own documented tie-break mechanism, all with numbers read from the RFP's own text, not manually supplied. Admins control the norm knowledge base's active/superseded/withdrawn status, manage user accounts (with real session revocation, not just login-blocking), and audit every RFP a buyer published despite a flagged clause.
 
