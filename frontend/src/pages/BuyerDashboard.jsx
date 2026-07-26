@@ -192,10 +192,21 @@ export default function BuyerDashboard() {
 
   async function pollUntilReady(id) {
     try {
-      const { status } = await getStatus(id)
+      const { status, error } = await getStatus(id)
       if (status === 'extracting' || status === 'checking_compliance' || status === 'checking_prohibited_practices') {
         setPhase('evaluating')
         pollTimer.current = setTimeout(() => pollUntilReady(id), POLL_INTERVAL_MS)
+        return
+      }
+      if (status === 'failed') {
+        // A terminal failure the backend detected (e.g. the remote LLM
+        // became unreachable mid-run) -- stop polling and clear the stuck
+        // in-flight marker so reloading this page doesn't just resume
+        // waiting on a run that already died. See onReset/reset() for the
+        // matching "Try again" action.
+        localStorage.removeItem(ACTIVE_EVALUATION_KEY)
+        setPhase('error')
+        setErrorMessage(error || 'Evaluation failed.')
         return
       }
       await resolveOutcome(id, status)

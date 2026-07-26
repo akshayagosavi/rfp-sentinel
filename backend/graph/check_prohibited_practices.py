@@ -29,7 +29,18 @@ _INSTRUCTION = (
     "item describes? Classify it as 'violation' ONLY if the criterion's own content matches "
     "one of the listed practices. If none of the reference items describe anything this "
     "criterion actually does, that is 'unclear', not 'violation' -- most criteria won't match "
-    "any of these, and that's the expected, normal outcome."
+    "any of these, and that's the expected, normal outcome.\n\n"
+    "Sharing a general topic with a reference item is NOT the same as violating it -- only "
+    "classify as 'violation' if the criterion performs the specific prohibited action itself. "
+    "Two common false matches to avoid: (1) listing generic technical parameters -- capacity, "
+    "speed, a technical standard like an interface or connectivity spec -- is NOT 'mentioning a "
+    "specific Brand or Make or Model or Manufacturer or Dealer name'; that practice means an "
+    "actual proprietary brand/manufacturer/model name appears (e.g. 'must be a Dell Latitude'), "
+    "not that the criterion states a spec value. (2) Correctly citing or implementing a real "
+    "government order/policy (e.g. quoting the actual DPIIT Class I/II definition or MSME "
+    "policy) is NOT a violation of a rule against getting that definition wrong -- only flag it "
+    "if the criterion's own wording actually contradicts or misstates the cited rule, not "
+    "merely because it discusses the same subject."
 )
 
 

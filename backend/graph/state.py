@@ -7,7 +7,7 @@ doesn't natively know our custom Pydantic types (warned it will start
 rejecting them outright in a future version). Each node converts dict <->
 StructuredRFP at its own boundary instead of trusting msgpack with the model.
 """
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 
 class EvaluationState(TypedDict):
@@ -16,6 +16,10 @@ class EvaluationState(TypedDict):
     structured_rfp: dict | None  # StructuredRFP.model_dump() -- see module docstring
     status: Literal[
         "extracting", "checking_compliance", "checking_prohibited_practices",
-        "awaiting_checkpoint_a", "approved",
+        "awaiting_checkpoint_a", "approved", "failed",
     ]
     max_criteria: int | None  # testing-only cap on how many criteria to process; None = no limit
+    # Only set when status == "failed" -- a node raised mid-run and
+    # _run_to_checkpoint_a (backend/api/rfp.py) wrote this as the terminal
+    # state instead of leaving the last-successful-node status hanging.
+    error: NotRequired[str]

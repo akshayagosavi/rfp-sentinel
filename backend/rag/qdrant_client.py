@@ -28,7 +28,7 @@ load_dotenv()
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 NORMS_COLLECTION = "norms"
 BIDS_COLLECTION = "bids"
-VECTOR_SIZE = 768
+VECTOR_SIZE = 1024  # bge-m3's dense embedding dimension (was 768 for nomic-embed-text)
 
 # Fixed namespace so the same doc_id + chunk_index always produces the same
 # point ID — re-running ingestion overwrites existing points instead of

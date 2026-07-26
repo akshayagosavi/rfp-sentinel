@@ -1,6 +1,6 @@
 """
-M6: convert chunk text into embedding vectors using nomic-embed-text via
-Ollama — this is "the translator": text in, a list of 768 numbers out.
+M6: convert chunk text into embedding vectors using bge-m3 via Ollama --
+this is "the translator": text in, a list of numbers out.
 """
 import os
 import sys

@@ -42,7 +42,15 @@ def _config(rfp_id: str) -> dict:
 
 
 def _run_to_checkpoint_a(graph, initial_state: dict, config: dict) -> None:
-    graph.invoke(initial_state, config)
+    try:
+        graph.invoke(initial_state, config)
+    except Exception as e:
+        # A node raised mid-run (e.g. the remote LLM became unreachable) --
+        # LangGraph only checkpoints between completed nodes, so without this
+        # the last-saved status (e.g. "checking_compliance") would sit there
+        # forever, indistinguishable from still-in-progress. Write an explicit
+        # terminal status so /status can tell the buyer it actually failed.
+        graph.update_state(config, {"status": "failed", "error": str(e)})
 
 
 @router.post("/upload")
@@ -74,7 +82,11 @@ def get_status(rfp_id: str, request: Request):
     state = request.app.state.graph.get_state(_config(rfp_id))
     if not state.values:
         raise HTTPException(404, "rfp_id not found")
-    return {"rfp_id": rfp_id, "status": state.values.get("status", "unknown")}
+    return {
+        "rfp_id": rfp_id,
+        "status": state.values.get("status", "unknown"),
+        "error": state.values.get("error"),
+    }
 
 
 @router.get("/{rfp_id}/criteria")
