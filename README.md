@@ -7,8 +7,7 @@
 <img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/8c3c932d-399b-45ed-9eeb-8afdc16c7202" />
 <img width="1920" height="935" alt="image" src="https://github.com/user-attachments/assets/4b6bdeb2-1fe3-4b24-8724-e1f7fb741acc" />
 
-## What is this, in plain English?
-
+## What is this ?
 In India, government departments buy things like laptops or office equipment through an official online marketplace called **GeM**. A department publishes a tender (a document listing what they need and who's allowed to bid), companies submit bids, and someone has to fairly compare every bid against the rules and pick a winner.
 
 **RFP Sentinel is software that helps with both sides of that process.** A government buyer uploads their tender, and the system automatically checks it against real government procurement rules — flagging anything that looks non-compliant *before* it goes public, with a citation to the exact rule, so a human can review it in seconds instead of reading pages of regulation. Once bids come in, it checks each one against the tender's own requirements and produces a ranked, explainable result — but it never picks the final winner on its own. A person always makes that call.
