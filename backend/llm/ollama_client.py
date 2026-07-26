@@ -23,8 +23,8 @@ logger = get_logger(__name__)
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("OLLAMA_LLM_MODEL", "llama3.2:3b")
-MAX_RETRIES = 2
-_CONNECTION_RETRY_DELAY_SECONDS = 3  # only for network errors -- a bad JSON response needs no delay
+MAX_RETRIES = 3
+_CONNECTION_RETRY_DELAY_SECONDS = 5  # only for network errors -- a bad JSON response needs no delay
 
 
 class ReferenceChunk(BaseModel):
