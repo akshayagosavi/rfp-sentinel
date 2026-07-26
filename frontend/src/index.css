@@ -7,11 +7,14 @@
   --color-accent: #5b4be5;
   --color-accent-hover: #4c3dd1;
 
-  --color-canvas: #ffffff;
-  --color-elevated: #fbfbfd;
-  --color-surface: rgba(0, 0, 0, 0.02);
-  --color-line: rgba(0, 0, 0, 0.09);
-  --color-ink: #18181b;
+  /* Light mode: three visibly distinct tiers -- tinted-slate page <
+     crisp-white cards < faint-indigo nested surfaces -- so elevation is
+     legible instead of everything sitting at the same near-white value. */
+  --color-canvas: #f6f7fb;
+  --color-elevated: #ffffff;
+  --color-surface: rgba(91, 75, 229, 0.05);
+  --color-line: #e5e7eb;
+  --color-ink: #111827;
   --color-subtle: #6b7280;
 
   --color-success: #16a34a;
@@ -21,6 +24,11 @@
   --color-danger: #dc2626;
   --color-danger-soft: #fef2f2;
   --color-danger-line: rgba(220, 38, 38, 0.25);
+
+  /* Ambient hero glow intensity (see GradientBackdrop.jsx) -- softer by
+     default in light mode, dark mode keeps the original stronger values. */
+  --glow-strong: 28%;
+  --glow-soft: 8%;
 
   --radius-card: 0.75rem;
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
@@ -41,6 +49,9 @@
   --color-danger: #f87171;
   --color-danger-soft: rgba(239, 68, 68, 0.12);
   --color-danger-line: rgba(248, 113, 113, 0.3);
+
+  --glow-strong: 55%;
+  --glow-soft: 18%;
 }
 
 html {
@@ -51,6 +62,19 @@ body {
   background-color: var(--color-canvas);
   color: var(--color-ink);
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Light mode only: every card in this app already pairs `border-line` with
+   `bg-elevated` (rounded-card border border-line bg-elevated ...), so this
+   targets that existing pattern directly -- no component files touched.
+   A soft lift shadow makes cards read as sitting above the tinted canvas,
+   not printed flat on it. Skipped in dark mode entirely: elevated/canvas
+   contrast already carries the separation there, and a shadow would just
+   muddy against a dark background. */
+:root:not(.dark) .border-line.bg-elevated {
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 2px 8px rgba(16, 24, 40, 0.06);
 }
 
 .bg-dot-grid {

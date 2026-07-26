@@ -7,7 +7,14 @@ not, since 10L exceeds L1's 15% band ceiling of 9.2L).
 """
 from backend.models.evidence import EvidenceItem
 from backend.models.rfp import Criterion
-from backend.scoring.scoring import BidInput, apply_mse_price_match, run_l1_selection, score_stage1, score_stage2
+from backend.scoring.scoring import (
+    BidInput,
+    apply_mse_price_match,
+    run_l1_selection,
+    score_stage1,
+    score_stage2,
+    score_stage2_qcbs,
+)
 
 
 def _criterion(id_, mandatory, category="technical"):
@@ -24,6 +31,19 @@ def _evidence(criterion_id, verdict, bid_id="bid-1"):
 def test_stage1_fails_on_mandatory_fail():
     criteria = [_criterion("c1", mandatory=True), _criterion("c2", mandatory=True)]
     evidence = [_evidence("c1", "pass"), _evidence("c2", "fail")]
+    result = score_stage1(criteria, evidence)
+    assert result.passed is False
+    assert result.failed_criteria == ["c2"]
+    assert result.blocked_pending_review is False
+
+
+def test_stage1_fails_on_mandatory_partial():
+    # GeM's technical gate gives no partial credit on a mandatory ("must/
+    # shall") requirement -- a mismatch is fatal even if the bid partially
+    # addresses it. This must fail the bidder exactly like an outright
+    # 'fail' verdict, not silently pass through ungated.
+    criteria = [_criterion("c1", mandatory=True), _criterion("c2", mandatory=True)]
+    evidence = [_evidence("c1", "pass"), _evidence("c2", "partial")]
     result = score_stage1(criteria, evidence)
     assert result.passed is False
     assert result.failed_criteria == ["c2"]
@@ -220,3 +240,54 @@ def test_run_l1_selection_falls_back_to_all_tied_when_none_are_mse():
     ]
     winner = run_l1_selection(["b1", "b2"], bids, mse_preference_active=True)
     assert winner in {"b1", "b2"}
+
+
+# --- score_stage2_qcbs(): technical quality keeps mattering after the gate ---
+
+
+def test_qcbs_cheapest_bidder_does_not_always_win():
+    # C is priciest but has by far the best technical_score -- at a
+    # technical-heavy weighting, C should beat the cheapest bidder B.
+    bids = [
+        BidInput(bid_id="A", price=500_000, is_mii_local=True, is_mse=True),
+        BidInput(bid_id="B", price=470_000, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="C", price=540_000, is_mii_local=True, is_mse=False),
+    ]
+    technical_scores = {"A": 72, "B": 60, "C": 95}
+    result = score_stage2_qcbs(bids, technical_scores, technical_weight=0.8, price_weight=0.2)
+    assert result.winner == "C"
+    assert result.ranking[0]["bid_id"] == "C"
+
+
+def test_qcbs_cheapest_price_gets_100_price_score():
+    bids = [
+        BidInput(bid_id="cheap", price=100, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="pricier", price=200, is_mii_local=True, is_mse=False),
+    ]
+    technical_scores = {"cheap": 50, "pricier": 50}
+    result = score_stage2_qcbs(bids, technical_scores)
+    by_id = {r["bid_id"]: r for r in result.ranking}
+    assert by_id["cheap"]["price_score"] == 100.0
+    assert by_id["pricier"]["price_score"] == 50.0
+
+
+def test_qcbs_excludes_non_mii_bidders():
+    bids = [
+        BidInput(bid_id="local", price=100, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="foreign", price=50, is_mii_local=False, is_mse=False),
+    ]
+    result = score_stage2_qcbs(bids, {"local": 80, "foreign": 90})
+    assert [r["bid_id"] for r in result.ranking] == ["local"]
+
+
+def test_qcbs_empty_ranking_when_no_mii_local_bidders():
+    bids = [BidInput(bid_id="foreign", price=50, is_mii_local=False, is_mse=False)]
+    result = score_stage2_qcbs(bids, {"foreign": 90})
+    assert result.ranking == []
+    assert result.winner is None
+
+
+def test_qcbs_missing_technical_score_defaults_to_zero():
+    bids = [BidInput(bid_id="b1", price=100, is_mii_local=True, is_mse=False)]
+    result = score_stage2_qcbs(bids, {})  # no technical_score recorded for b1
+    assert result.ranking[0]["technical_score"] == 0.0

@@ -13,10 +13,20 @@ file "experience.pdf" instead of "Experience Criteria.pdf" would still
 match; a bidder naming it something unrelated would correctly show as
 missing even if the content happens to be right -- that's the honest
 limitation of a filename-based check, not a bug to silently paper over.
+
+GeM's own RFP template lists some required documents as generic, numbered
+placeholders -- "Additional Doc 1 (Requested in ATC)", "...Doc 2...", etc.
+-- whose real meaning only exists in the RFP's free-text ATC section, not
+in this structured list. Name-matching those individually is meaningless
+(there's no real distinguishing name to match against), so they're
+collapsed into one combined "at least N files" bucket instead of N fake
+individually-identified requirements.
 """
 import re
 import sys
 from pathlib import Path
+
+_GENERIC_ATC_PATTERN = re.compile(r"^Additional Doc \d+", re.IGNORECASE)
 
 
 def _normalize(name: str) -> str:
@@ -26,16 +36,34 @@ def _normalize(name: str) -> str:
 
 
 def check_document_completeness(required_documents: list[str], uploaded_filenames: list[str]) -> dict:
-    normalized_uploaded = [(_normalize(f), f) for f in uploaded_filenames]
+    generic_docs = [d for d in required_documents if _GENERIC_ATC_PATTERN.match(d)]
+    named_docs = [d for d in required_documents if not _GENERIC_ATC_PATTERN.match(d)]
+
+    remaining = list(uploaded_filenames)
     present = []
     missing = []
-    for doc in required_documents:
+
+    for doc in named_docs:
         norm_doc = _normalize(doc)
-        match = next((orig for norm, orig in normalized_uploaded if norm_doc and (norm_doc in norm or norm in norm_doc)), None)
+        match = next(
+            (f for f in remaining if norm_doc and (norm_doc in _normalize(f) or _normalize(f) in norm_doc)), None
+        )
         if match:
             present.append({"required": doc, "matched_file": match})
+            remaining.remove(match)
         else:
             missing.append(doc)
+
+    # Whatever uploaded files are left over (not consumed by a named match)
+    # count toward the generic ATC bucket -- no name-matching needed, since
+    # there's nothing real to match against.
+    if generic_docs:
+        label = f"Additional ATC Documents ({len(generic_docs)} required)"
+        if len(remaining) >= len(generic_docs):
+            present.append({"required": label, "matched_file": ", ".join(remaining[: len(generic_docs)])})
+        else:
+            missing.append(f"{label} -- only {len(remaining)} of {len(generic_docs)} provided")
+
     return {"present": present, "missing": missing}
 
 

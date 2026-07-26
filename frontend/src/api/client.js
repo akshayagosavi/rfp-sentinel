@@ -27,13 +27,85 @@ export async function login(email, password) {
   return { accessToken: data.access_token, role: data.role }
 }
 
-export async function getBidderRfps() {
-  const { data } = await client.get('/bidder/rfps')
-  return data.rfps
+export async function signupBidder(email, password, orgName, gemSellerProof) {
+  const { data } = await client.post('/auth/signup/bidder', {
+    email,
+    password,
+    org_name: orgName,
+    gem_seller_proof: gemSellerProof || null,
+  })
+  return { accessToken: data.access_token, role: data.role }
 }
 
-export async function getBidderRfpDetail(rfpId) {
-  const { data } = await client.get(`/bidder/rfps/${rfpId}`)
+export async function getMe() {
+  const { data } = await client.get('/auth/me')
+  return data
+}
+
+export async function updateProfile(orgName, gemSellerProof) {
+  const { data } = await client.patch('/auth/me', { org_name: orgName, gem_seller_proof: gemSellerProof || null })
+  return data
+}
+
+export async function changePassword(currentPassword, newPassword) {
+  const { data } = await client.post('/auth/me/change-password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  })
+  return data
+}
+
+export async function uploadMseCertificate(file) {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await client.post('/auth/me/mse-certificate', form)
+  return data
+}
+
+export async function uploadMiiCertificate(file) {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await client.post('/auth/me/mii-certificate', form)
+  return data
+}
+
+// Public -- no auth required, matches the real-GeM-style "anyone can
+// browse published tenders" behavior. Only "Apply" needs an account.
+export async function getBids({ keyword, category, status } = {}) {
+  const { data } = await client.get('/bids', { params: { keyword, category, status } })
+  return data.bids
+}
+
+export async function getBidDetail(rfpId) {
+  const { data } = await client.get(`/bids/${rfpId}`)
+  return data
+}
+
+export function bidDocumentUrl(rfpId) {
+  return `${BASE_URL}/bids/${rfpId}/document`
+}
+
+export async function getLegitimacyCheck(rfpId) {
+  const { data } = await client.get(`/bids/${rfpId}/legitimacy-check`)
+  return data.citations
+}
+
+export async function getRfpSummary(rfpId) {
+  const { data } = await client.get(`/bids/${rfpId}/summary`)
+  return data.summary
+}
+
+// Auth required -- a signed-in bidder's own submitted bids and their status.
+export async function getMyBids() {
+  const { data } = await client.get('/bidder/my-bids')
+  return data.bids
+}
+
+export async function submitBid(rfpId, files, financialDocument) {
+  const form = new FormData()
+  for (const file of files) form.append('files', file)
+  form.append('financial_document', financialDocument)
+  const { data } = await client.post(`/bidder/bids/${rfpId}/submit`, form)
   return data
 }
 
@@ -57,6 +129,64 @@ export async function getCriteria(rfpId) {
 export async function approveCriteria(rfpId, criteria) {
   const { data } = await client.post(`/rfp/${rfpId}/criteria/approve`, { criteria })
   return data
+}
+
+export async function getMyRfps() {
+  const { data } = await client.get('/rfp/mine')
+  return data.rfps
+}
+
+export async function closeRfp(rfpId) {
+  const { data } = await client.post(`/rfp/${rfpId}/close`)
+  return data
+}
+
+export async function getEvaluation(rfpId) {
+  const { data } = await client.get(`/rfp/${rfpId}/evaluation`)
+  return data
+}
+
+export async function resolvePendingEvidence(rfpId, bidId, criterionId, verdict, reasoning) {
+  const { data } = await client.post(
+    `/rfp/${rfpId}/bids/${bidId}/evidence/${criterionId}/resolve`,
+    { verdict, reasoning },
+  )
+  return data
+}
+
+export async function openFinancialBids(rfpId) {
+  const { data } = await client.post(`/rfp/${rfpId}/open-financial-bids`)
+  return data
+}
+
+export async function runL1Selection(rfpId, msePreferenceActive) {
+  const { data } = await client.post(`/rfp/${rfpId}/run-l1-selection`, { mse_preference_active: msePreferenceActive })
+  return data
+}
+
+export async function getNorms() {
+  const { data } = await client.get('/admin/norms')
+  return data.norms
+}
+
+export async function updateNormStatus(normName, status) {
+  const { data } = await client.post(`/admin/norms/${encodeURIComponent(normName)}/status`, { status })
+  return data
+}
+
+export async function getUsers() {
+  const { data } = await client.get('/admin/users')
+  return data.users
+}
+
+export async function setUserActive(userId, isActive) {
+  const { data } = await client.post(`/admin/users/${userId}/active`, { is_active: isActive })
+  return data
+}
+
+export async function getFlaggedRfps() {
+  const { data } = await client.get('/admin/flagged-rfps')
+  return data.rfps
 }
 
 export { TOKEN_KEY }

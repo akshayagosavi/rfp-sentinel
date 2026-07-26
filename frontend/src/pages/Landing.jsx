@@ -1,20 +1,31 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
+  ArrowRight,
   Building2,
   Handshake,
   Settings2,
-  ShieldCheck,
   UploadCloud,
   ScanSearch,
   UserCheck,
   CheckCircle2,
+  FileUp,
+  ClipboardCheck,
+  Trophy,
   Scale,
   UserCog,
   FileSearch,
+  FileText,
+  Lock,
+  ShieldCheck,
 } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
+import { getBids } from '../api/client'
 import Nav from '../components/Nav'
 import GradientBackdrop from '../components/GradientBackdrop'
+import Container from '../components/Container'
+import Footer from '../components/Footer'
 
 const ROLES = [
   {
@@ -34,7 +45,7 @@ const ROLES = [
     name: 'Admins',
     icon: Settings2,
     description: 'Manage the norm knowledge base and user access across the platform.',
-    comingSoon: true,
+    comingSoon: false,
   },
 ]
 
@@ -43,8 +54,7 @@ const STEPS = [
   {
     icon: ScanSearch,
     title: 'Checked against norms',
-    description:
-      'Validated against six government procurement norms (GFR 2017, GeM GTC, Make-in-India, MeitY CRS, BIS CRS, MSME policy).',
+    description: 'Validated against government procurement norms and the RFP’s own rules.',
   },
   {
     icon: UserCheck,
@@ -53,8 +63,23 @@ const STEPS = [
   },
   {
     icon: CheckCircle2,
-    title: 'Publish with confidence',
-    description: 'Compliant RFPs are published and stored; issues are flagged with reasons.',
+    title: 'Published',
+    description: 'Bidders can now browse it and see exactly what to submit.',
+  },
+  {
+    icon: FileUp,
+    title: 'Bidders apply',
+    description: 'Sellers submit required documents; missing or misnamed files are flagged immediately.',
+  },
+  {
+    icon: ClipboardCheck,
+    title: 'Evaluated after close',
+    description: 'Every submission is checked against the approved criteria once bidding closes.',
+  },
+  {
+    icon: Trophy,
+    title: 'Shortlist confirmed',
+    description: 'Evaluator reviews the ranked results and confirms the outcome.',
   },
 ]
 
@@ -66,8 +91,8 @@ const FEATURES = [
   },
   {
     icon: UserCog,
-    title: 'Built for the evaluator',
-    description: 'A co-pilot for the assigned Technical Evaluator, not the bidder side.',
+    title: 'Built for both sides of the tender',
+    description: 'Deep evaluation tools for the buyer, plus a clear summary and submission checklist for bidders.',
   },
   {
     icon: FileSearch,
@@ -100,28 +125,59 @@ function SectionHeading({ title, subtitle, reduceMotion }) {
   )
 }
 
+// Public data only (no admin/auth call) -- an honest live count of open
+// tenders, not a fabricated platform-wide number. The other three trust
+// markers are qualitative facts about how the system works, not invented
+// stats dressed up as counts.
+function TrustRow({ bidCount }) {
+  const items = [
+    { icon: FileText, value: bidCount === null ? '—' : String(bidCount), label: 'open tenders published' },
+    { icon: ScanSearch, value: 'Electronics', label: 'category, GeM procurement' },
+    { icon: Lock, value: 'Sealed', label: 'two-envelope bidding' },
+    { icon: UserCheck, value: 'Human', label: 'checkpoint before publish' },
+  ]
+  return (
+    <div className="mx-auto mt-10 grid max-w-3xl grid-cols-2 gap-4 sm:grid-cols-4">
+      {items.map((item) => (
+        <div key={item.label} className="rounded-card border border-line bg-elevated/60 px-3 py-3 text-center">
+          <item.icon size={16} className="mx-auto text-accent" />
+          <p className="mt-1.5 text-base font-semibold text-ink">{item.value}</p>
+          <p className="text-xs text-subtle">{item.label}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function Landing() {
   const reduceMotion = useReducedMotion()
+  const { isAuthenticated, role } = useAuth()
+  const [bidCount, setBidCount] = useState(null)
+
+  useEffect(() => {
+    getBids()
+      .then((bids) => setBidCount(bids.length))
+      .catch(() => setBidCount(null))
+  }, [])
+
+  const primaryCta =
+    isAuthenticated && role === 'buyer'
+      ? { label: 'Go to Dashboard', to: '/buyer/dashboard' }
+      : { label: 'Get started as buyer', to: '/login' }
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <GradientBackdrop />
       <Nav>
-        <Link
-          to="/bidder/login"
-          className="text-sm font-medium text-subtle transition-colors duration-200 hover:text-ink"
-        >
-          Bidder Login
+        <Link to="/bids" className="text-sm font-medium text-subtle transition-colors duration-200 hover:text-ink">
+          Browse Bids
         </Link>
-        <Link
-          to="/login"
-          className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white transition-all duration-200 hover:scale-[1.03] hover:bg-accent-hover hover:shadow-[0_0_24px_-6px_var(--color-accent)]"
-        >
-          Buyer Login
+        <Link to="/about" className="text-sm font-medium text-subtle transition-colors duration-200 hover:text-ink">
+          About
         </Link>
       </Nav>
 
-      <main className="mx-auto max-w-3xl px-6 pt-16 pb-12 text-center">
+      <main className="mx-auto flex min-h-[calc(100vh-73px)] max-w-3xl flex-col items-center justify-center px-6 py-16 text-center">
         <motion.div
           variants={reduceMotion ? undefined : heroContainer}
           initial={reduceMotion ? undefined : 'hidden'}
@@ -140,20 +196,33 @@ export default function Landing() {
             RFP Sentinel checks tenders and bids against government procurement norms
             automatically, so evaluators spend their time on judgment calls, not paperwork.
           </motion.p>
-          <motion.div variants={reduceMotion ? undefined : heroItem} className="mt-10">
+          <motion.div
+            variants={reduceMotion ? undefined : heroItem}
+            className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
+          >
             <Link
-              to="/login"
-              className="rounded-full bg-accent px-6 py-3 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:bg-accent-hover hover:shadow-[0_0_28px_-6px_var(--color-accent)]"
+              to={primaryCta.to}
+              className="flex items-center gap-1.5 rounded-md bg-accent px-6 py-2.5 text-sm font-medium text-white transition-all duration-200 hover:scale-[1.02] hover:bg-accent-hover"
             >
-              Get started as a buyer
+              {primaryCta.label}
+              <ArrowRight size={15} />
             </Link>
+            <Link
+              to="/bids"
+              className="rounded-md border border-line bg-elevated px-6 py-2.5 text-sm font-medium text-ink transition-colors duration-200 hover:border-accent/40"
+            >
+              Browse open bids
+            </Link>
+          </motion.div>
+          <motion.div variants={reduceMotion ? undefined : heroItem}>
+            <TrustRow bidCount={bidCount} />
           </motion.div>
         </motion.div>
       </main>
 
       {/* Roles */}
       <section className="border-t border-line py-16">
-        <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 px-6 sm:grid-cols-3">
+        <Container className="grid grid-cols-1 gap-6 sm:grid-cols-3">
           {ROLES.map((role, i) => (
             <motion.div
               key={role.name}
@@ -178,46 +247,42 @@ export default function Landing() {
               <p className="mt-2 text-sm text-subtle">{role.description}</p>
             </motion.div>
           ))}
-        </div>
+        </Container>
       </section>
 
       {/* How it works */}
       <section className="border-t border-line py-16">
-        <div className="mx-auto max-w-5xl px-6">
+        <Container>
           <SectionHeading
             title="How it works"
-            subtitle="From upload to a published, defensible RFP."
+            subtitle="The full flow, from upload to a confirmed shortlist."
             reduceMotion={reduceMotion}
           />
-          <div className="mt-14 flex flex-col gap-10 sm:flex-row sm:items-start sm:gap-0">
+          <div className="mt-14 grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-4">
             {STEPS.map((step, i) => (
-              <div key={step.title} className="flex flex-1 flex-col items-center sm:flex-row sm:items-start">
-                <motion.div
-                  initial={reduceMotion ? undefined : { opacity: 0, y: 20 }}
-                  whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-                  viewport={{ once: true, amount: 0.4 }}
-                  transition={{ duration: 0.4, ease: 'easeOut', delay: reduceMotion ? 0 : i * 0.1 }}
-                  className="flex flex-col items-center px-2 text-center"
-                >
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-line bg-elevated text-accent">
-                    <step.icon size={20} />
-                  </span>
-                  <span className="mt-3 text-xs font-medium text-subtle">Step {i + 1}</span>
-                  <h3 className="mt-1 text-sm font-semibold text-ink">{step.title}</h3>
-                  <p className="mt-2 max-w-[13rem] text-sm text-subtle">{step.description}</p>
-                </motion.div>
-                {i < STEPS.length - 1 && (
-                  <div className="mx-2 mt-6 hidden h-px flex-1 border-t border-dashed border-line sm:block" />
-                )}
-              </div>
+              <motion.div
+                key={step.title}
+                initial={reduceMotion ? undefined : { opacity: 0, y: 20 }}
+                whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.4 }}
+                transition={{ duration: 0.4, ease: 'easeOut', delay: reduceMotion ? 0 : i * 0.06 }}
+                className="flex flex-col items-center px-2 text-center"
+              >
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-line bg-elevated text-accent">
+                  <step.icon size={20} />
+                </span>
+                <span className="mt-3 text-xs font-medium text-subtle">Step {i + 1}</span>
+                <h3 className="mt-1 text-sm font-semibold text-ink">{step.title}</h3>
+                <p className="mt-2 text-sm text-subtle">{step.description}</p>
+              </motion.div>
             ))}
           </div>
-        </div>
+        </Container>
       </section>
 
       {/* Why RFP Sentinel */}
       <section className="border-t border-line py-16">
-        <div className="mx-auto max-w-5xl px-6">
+        <Container>
           <SectionHeading title="Why RFP Sentinel" reduceMotion={reduceMotion} />
           <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-3">
             {FEATURES.map((feature, i) => (
@@ -238,87 +303,10 @@ export default function Landing() {
               </motion.div>
             ))}
           </div>
-        </div>
+        </Container>
       </section>
 
-      {/* Closing CTA band */}
-      <section className="border-t border-line bg-gradient-to-r from-accent/5 via-accent/10 to-accent/5">
-        <motion.div
-          initial={reduceMotion ? undefined : { opacity: 0, y: 16 }}
-          whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.5 }}
-          transition={{ duration: 0.4, ease: 'easeOut' }}
-          className="mx-auto max-w-3xl px-6 py-16 text-center"
-        >
-          <h2 className="text-2xl font-semibold tracking-tight text-ink">
-            Ready to evaluate with confidence?
-          </h2>
-          <div className="mt-6">
-            <Link
-              to="/login"
-              className="rounded-full bg-accent px-6 py-3 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:scale-[1.03] hover:bg-accent-hover hover:shadow-[0_0_28px_-6px_var(--color-accent)]"
-            >
-              Get started as a buyer
-            </Link>
-          </div>
-        </motion.div>
-      </section>
-
-      {/* Footer */}
-      <footer className="border-t border-line bg-elevated">
-        <div className="mx-auto max-w-5xl px-6 py-12">
-          <div className="grid grid-cols-1 gap-10 sm:grid-cols-3">
-            <div>
-              <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-                <ShieldCheck size={18} className="text-accent" />
-                RFP Sentinel
-              </span>
-              <p className="mt-3 max-w-xs text-sm text-subtle">
-                Bid evaluation, grounded in the rules that actually govern it.
-              </p>
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold tracking-wide text-subtle uppercase">Product</h4>
-              <ul className="mt-3 space-y-2 text-sm">
-                <li>
-                  <a href="#" className="text-subtle transition-colors duration-200 hover:text-ink">
-                    Buyers
-                  </a>
-                </li>
-                <li>
-                  <Link to="/bidder/login" className="text-subtle transition-colors duration-200 hover:text-ink">
-                    Bidders
-                  </Link>
-                </li>
-                <li>
-                  <a href="#" className="text-subtle transition-colors duration-200 hover:text-ink">
-                    Admins (soon)
-                  </a>
-                </li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold tracking-wide text-subtle uppercase">Resources</h4>
-              <ul className="mt-3 space-y-2 text-sm">
-                <li>
-                  <a href="#" className="text-subtle transition-colors duration-200 hover:text-ink">
-                    About
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="text-subtle transition-colors duration-200 hover:text-ink">
-                    GeM procurement norms
-                  </a>
-                </li>
-              </ul>
-            </div>
-          </div>
-          <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t border-line pt-6 text-xs text-subtle sm:flex-row">
-            <span>© 2026 RFP Sentinel</span>
-            <span>Built for GeM Electronics procurement</span>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   )
 }

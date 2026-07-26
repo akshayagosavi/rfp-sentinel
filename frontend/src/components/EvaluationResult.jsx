@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { CheckCircle2, AlertTriangle, XCircle, Loader2 } from 'lucide-react'
 
@@ -72,12 +73,20 @@ export default function EvaluationResult({
             </div>
           )}
         </dl>
-        <button
-          onClick={onReset}
-          className="mt-6 text-sm font-medium text-success underline decoration-success/40 underline-offset-2 transition-colors hover:decoration-success"
-        >
-          Upload another RFP
-        </button>
+        <div className="mt-6 flex items-center gap-4">
+          <Link
+            to={`/buyer/rfp/${record?.rfpId}`}
+            className="text-sm font-medium text-success underline decoration-success/40 underline-offset-2 transition-colors hover:decoration-success"
+          >
+            Manage this RFP
+          </Link>
+          <button
+            onClick={onReset}
+            className="text-sm font-medium text-success underline decoration-success/40 underline-offset-2 transition-colors hover:decoration-success"
+          >
+            Upload another RFP
+          </button>
+        </div>
       </motion.div>
     )
   }

@@ -72,12 +72,29 @@ def retrieve_and_extract_evidence(bid_id: str, structured_rfp: StructuredRFP) ->
             for m in matches
         ]
 
-        result = classify(
-            subject_text=criterion.text,
-            references=references,
-            verdict_options=_VERDICT_OPTIONS,
-            instruction=_INSTRUCTION,
-        )
+        try:
+            result = classify(
+                subject_text=criterion.text,
+                references=references,
+                verdict_options=_VERDICT_OPTIONS,
+                instruction=_INSTRUCTION,
+            )
+        except RuntimeError as e:
+            # classify() exhausted its retries -- the model never produced a
+            # valid verdict for this criterion (e.g. it emitted the literal
+            # string "null" instead of one of _VERDICT_OPTIONS). Downgrading
+            # to not_found here, not re-raising, matches the uncited-verdict
+            # handling just below: an unusable answer isn't a finding, but it
+            # also shouldn't cost the bid every other criterion's evidence.
+            logger.warning("criterion %d/%d: classify() failed (%s) -- not_found", n, total, e)
+            evidence.append(EvidenceItem(
+                criterion_id=criterion.id,
+                bid_id=bid_id,
+                verdict="not_found",
+                reasoning=f"Classifier could not produce a usable verdict: {e}",
+            ))
+            continue
+
         # Same grounding discipline as check_rfp_compliance: a verdict that
         # can't point at a real citation isn't a finding, it's a guess.
         if result.citation is not None:

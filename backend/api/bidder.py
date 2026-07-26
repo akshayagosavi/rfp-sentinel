@@ -1,73 +1,99 @@
 """
-Bidder-facing RFP endpoints -- read-only. A bidder should never have to
-open the RFP PDF themselves just to find out what documents to submit;
-these two endpoints answer "what's open to bid on" and "what exactly does
-this one require," using data already produced by the buyer-side pipeline
-(extract_rfp_criteria's structured_rfp, including required_documents).
+Bidder-facing endpoints -- what a SIGNED-IN bidder needs about their OWN
+activity. Browsing published bids is public (see backend/api/bids.py);
+this file covers "my submitted bids" and the actual submission itself.
 
-No new persistence added: "published" RFPs are found by scanning
-data/rfps/ for uploaded files and checking each one's graph status is
-"approved" -- the same status the buyer flow already sets at Checkpoint A.
-A dedicated `rfps` table (per the original plan) is the real long-term
-answer once evaluation volume makes a directory scan too slow; not needed
-at today's scale.
+Submission enforces the upload-time completeness check as a hard block --
+our deliberate improvement over real GeM, which silently invalidates a bid
+with a missing document with no warning at all. This must stay a BLOCK,
+not a post-hoc flag: unlike check_document_completeness's other use (a
+buyer-side, non-blocking review of an already-closed bid that can't be
+fixed anymore), here the bidder can still fix it and resubmit before the
+deadline, so there's no reason to accept a submission we already know is
+incomplete.
 """
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+
+from backend.auth import get_current_bidder
+from backend.db import create_bid_record, get_rfp_record, has_bidder_applied, list_bidder_bids
+from backend.graph.check_document_completeness import check_document_completeness
+from backend.rag.qdrant_client import ensure_bids_collection, get_client
+from ingestion.ingest_bid import ingest_bid
 
 router = APIRouter(prefix="/bidder", tags=["bidder"])
 
-RFP_DIR = Path("data/rfps")
+BID_DIR = Path("data/bids")
 
 
 def _config(rfp_id: str) -> dict:
     return {"configurable": {"thread_id": rfp_id}}
 
 
-def _iter_rfp_ids():
-    seen = set()
-    for path in RFP_DIR.glob("*_*"):
-        rfp_id = path.name.split("_", 1)[0]
-        if rfp_id not in seen:
-            seen.add(rfp_id)
-            yield rfp_id
+@router.get("/my-bids")
+def my_bids(request: Request, bidder_email: str = Depends(get_current_bidder)):
+    return {"bids": list_bidder_bids(request.app.state.db_pool, bidder_email)}
 
 
-@router.get("/rfps")
-def list_published_rfps(request: Request):
-    graph = request.app.state.graph
-    published = []
-    for rfp_id in _iter_rfp_ids():
-        state = graph.get_state(_config(rfp_id))
-        rfp = state.values.get("structured_rfp") if state.values else None
-        if not rfp or state.values.get("status") != "approved":
-            continue
-        published.append({
-            "rfp_id": rfp_id,
-            "source_file": rfp["source_file"],
-            "category": rfp["category"],
-            "evaluation_method": rfp["evaluation_method"],
-            "criteria_count": len(rfp["criteria"]),
-            "required_documents_count": len(rfp.get("required_documents", [])),
-        })
-    return {"rfps": published}
+@router.post("/bids/{rfp_id}/submit")
+async def submit_bid(
+    rfp_id: str,
+    request: Request,
+    files: list[UploadFile] = File(...),  # technical/eligibility documents -- Packet-I
+    financial_document: UploadFile = File(...),  # price schedule / financial bid -- Packet-II, sealed
+    bidder_email: str = Depends(get_current_bidder),
+):
+    pool = request.app.state.db_pool
 
+    record = get_rfp_record(pool, rfp_id)
+    if record is None or record["status"] != "published":
+        raise HTTPException(404, "This bid is not open for submission")
 
-@router.get("/rfps/{rfp_id}")
-def get_rfp_summary(rfp_id: str, request: Request):
+    if has_bidder_applied(pool, rfp_id, bidder_email):
+        raise HTTPException(409, "You have already submitted a bid for this RFP")
+
     state = request.app.state.graph.get_state(_config(rfp_id))
-    rfp = state.values.get("structured_rfp") if state.values else None
-    if not rfp or state.values.get("status") != "approved":
-        raise HTTPException(404, "rfp_id not found, or not yet published")
+    structured_rfp = state.values.get("structured_rfp") if state.values else None
+    if not structured_rfp:
+        raise HTTPException(404, "RFP criteria not found")
+    required_documents = structured_rfp.get("required_documents", [])
 
-    mandatory_count = sum(1 for c in rfp["criteria"] if c["mandatory"])
-    return {
-        "rfp_id": rfp_id,
-        "source_file": rfp["source_file"],
-        "category": rfp["category"],
-        "evaluation_method": rfp["evaluation_method"],
-        "criteria_count": len(rfp["criteria"]),
-        "mandatory_criteria_count": mandatory_count,
-        "required_documents": rfp.get("required_documents", []),
-    }
+    # The blocking completeness check -- deterministic, no LLM, reused
+    # as-is from the buyer-side non-blocking version (backend.graph.
+    # check_document_completeness). Same function, different consequence,
+    # because the moment in the timeline is different (see module docstring).
+    # Only the technical documents are checked -- required_documents are all
+    # Packet-I types; the financial document is mandatory structurally
+    # (every bid needs one), not something the RFP's own list enumerates.
+    uploaded_filenames = [f.filename for f in files]
+    completeness = check_document_completeness(required_documents, uploaded_filenames)
+    if completeness["missing"]:
+        raise HTTPException(422, {
+            "message": "Submission incomplete -- fix the files below and resubmit.",
+            "missing": completeness["missing"],
+            "present": [item["required"] for item in completeness["present"]],
+        })
+
+    bid_id = uuid.uuid4().hex[:8]
+    bid_dir = BID_DIR / bid_id
+    bid_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files = []
+    for f in files:
+        dest = bid_dir / f.filename
+        dest.write_bytes(await f.read())
+        saved_files.append(("I", dest))
+
+    financial_dest = bid_dir / financial_document.filename
+    financial_dest.write_bytes(await financial_document.read())
+    saved_files.append(("II", financial_dest))  # sealed -- search_bid() defaults to packet="I", never sees this
+
+    client = get_client()
+    ensure_bids_collection(client)
+    ingest_bid(client, bid_id, rfp_id, bidder_email, saved_files)
+
+    create_bid_record(pool, bid_id, rfp_id, bidder_email)
+
+    return {"bid_id": bid_id, "status": "submitted"}

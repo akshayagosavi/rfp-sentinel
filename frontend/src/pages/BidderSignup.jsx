@@ -6,12 +6,14 @@ import { useAuth } from '../context/AuthContext'
 import Nav from '../components/Nav'
 import GradientBackdrop from '../components/GradientBackdrop'
 
-export default function BidderLogin() {
-  const { login, logout } = useAuth()
+export default function BidderSignup() {
+  const { signupBidder } = useAuth()
   const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [orgName, setOrgName] = useState('')
+  const [gemSellerProof, setGemSellerProof] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -20,20 +22,10 @@ export default function BidderLogin() {
     setError('')
     setSubmitting(true)
     try {
-      const userRole = await login(email, password)
-      // The backend only checks email+password, not which login page was
-      // used -- a buyer/admin's correct credentials would otherwise
-      // "succeed" here too, just to get silently redirected away later by
-      // the dashboard's own role guard. Reject it right here instead, with
-      // a real error, and roll back the session login() just applied.
-      if (userRole !== 'bidder') {
-        logout()
-        setError('This account is not a bidder account. Use the login page for your account type.')
-        return
-      }
+      await signupBidder(email, password, orgName, gemSellerProof)
       navigate('/bidder/dashboard')
-    } catch {
-      setError('Invalid email or password.')
+    } catch (err) {
+      setError(err.response?.status === 409 ? 'An account with this email already exists.' : 'Signup failed.')
     } finally {
       setSubmitting(false)
     }
@@ -44,7 +36,7 @@ export default function BidderLogin() {
       <GradientBackdrop />
       <Nav />
 
-      <div className="flex min-h-[calc(100vh-73px)] items-center justify-center px-6">
+      <div className="flex min-h-[calc(100vh-73px)] items-center justify-center px-6 py-10">
         <motion.div
           initial={reduceMotion ? undefined : { opacity: 0, y: 16 }}
           animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
@@ -55,13 +47,24 @@ export default function BidderLogin() {
             <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-accent">
               <Handshake size={20} />
             </span>
-            <h1 className="mt-4 text-xl font-semibold text-ink">Bidder Login</h1>
-            <p className="mt-1 text-sm text-subtle">
-              Sign in to see published RFPs and what you need to submit.
-            </p>
+            <h1 className="mt-4 text-xl font-semibold text-ink">Seller Signup</h1>
+            <p className="mt-1 text-sm text-subtle">Create an account to view and bid on published RFPs.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+            <div>
+              <label htmlFor="orgName" className="block text-sm font-medium text-ink">
+                Company / seller name
+              </label>
+              <input
+                id="orgName"
+                type="text"
+                required
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                className="mt-1 w-full rounded-md border border-line bg-canvas px-3 py-2 text-sm text-ink transition-colors duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+              />
+            </div>
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-ink">
                 Email
@@ -83,10 +86,27 @@ export default function BidderLogin() {
                 id="password"
                 type="password"
                 required
+                minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="mt-1 w-full rounded-md border border-line bg-canvas px-3 py-2 text-sm text-ink transition-colors duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
               />
+            </div>
+            <div>
+              <label htmlFor="gemSellerProof" className="block text-sm font-medium text-ink">
+                GeM Seller ID <span className="font-normal text-subtle">(optional, for now)</span>
+              </label>
+              <input
+                id="gemSellerProof"
+                type="text"
+                placeholder="e.g. your GeM seller registration number"
+                value={gemSellerProof}
+                onChange={(e) => setGemSellerProof(e.target.value)}
+                className="mt-1 w-full rounded-md border border-line bg-canvas px-3 py-2 text-sm text-ink transition-colors duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+              />
+              <p className="mt-1 text-xs text-subtle">
+                Not verified yet -- stored for when this integrates with real GeM seller records.
+              </p>
             </div>
 
             {error && (
@@ -100,14 +120,14 @@ export default function BidderLogin() {
               disabled={submitting}
               className="w-full rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-all duration-200 hover:scale-[1.01] hover:bg-accent-hover disabled:opacity-60 disabled:hover:scale-100"
             >
-              {submitting ? 'Signing in...' : 'Sign in'}
+              {submitting ? 'Creating account...' : 'Sign up'}
             </button>
           </form>
 
           <p className="mt-6 text-center text-xs text-subtle">
-            New seller?{' '}
-            <Link to="/bidder/signup" className="font-medium text-accent hover:underline">
-              Create an account
+            Already have an account?{' '}
+            <Link to="/bidder/login" className="font-medium text-accent hover:underline">
+              Sign in
             </Link>
           </p>
         </motion.div>

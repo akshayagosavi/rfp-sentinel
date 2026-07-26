@@ -96,6 +96,36 @@ def mark_status(client: QdrantClient, norm_name: str, new_status: str) -> None:
     )
 
 
+def list_norms(client: QdrantClient) -> list[dict]:
+    """One row per distinct norm_name (not one per chunk) -- scrolls the
+    whole norms collection and dedupes in Python since Qdrant has no native
+    GROUP BY. Fine at this scale (a handful of norm documents, hundreds of
+    chunks each); revisit with a dedicated summary collection only if that
+    stops being true. Backs the admin norm-management UI's status controls
+    -- mark_status() itself has existed since M6/M7, this is what finally
+    surfaces it."""
+    points, _ = client.scroll(
+        collection_name=NORMS_COLLECTION,
+        limit=10000,
+        with_payload=["norm_name", "status", "version", "effective_date", "source_file"],
+    )
+    by_name: dict[str, dict] = {}
+    for p in points:
+        payload = p.payload
+        name = payload["norm_name"]
+        if name not in by_name:
+            by_name[name] = {
+                "norm_name": name,
+                "status": payload["status"],
+                "version": payload.get("version"),
+                "effective_date": payload.get("effective_date"),
+                "source_file": payload.get("source_file"),
+                "chunk_count": 0,
+            }
+        by_name[name]["chunk_count"] += 1
+    return sorted(by_name.values(), key=lambda n: n["norm_name"])
+
+
 def search_active(client: QdrantClient, query_vector: list[float], top_k: int = 5):
     return client.query_points(
         collection_name=NORMS_COLLECTION,
@@ -209,6 +239,29 @@ def get_bid_source_files(client: QdrantClient, bid_id: str, packet: str = "I") -
         with_payload=["source_file"],
     )
     return sorted({p.payload["source_file"] for p in points})
+
+
+def get_bid_packet_text(client: QdrantClient, bid_id: str, packet: str = "II") -> str:
+    """Full concatenated text of every chunk in one bid's packet, page-ordered
+    -- unlike search_bid()'s semantic top-k search, this is a plain scroll
+    (no query vector), for when the caller needs the whole document's
+    content at once rather than the most relevant excerpt. Built for Stage
+    2 price extraction: a total price figure could be anywhere in a
+    price-schedule document, so there's no useful query to search with --
+    the whole thing needs to go to the model."""
+    if packet not in ("I", "II"):
+        raise ValueError(f"packet must be 'I' or 'II', got {packet!r}")
+    points, _ = client.scroll(
+        collection_name=BIDS_COLLECTION,
+        scroll_filter=Filter(must=[
+            FieldCondition(key="bid_id", match=MatchValue(value=bid_id)),
+            FieldCondition(key="packet", match=MatchValue(value=packet)),
+        ]),
+        limit=1000,
+        with_payload=["text", "page_number"],
+    )
+    ordered = sorted(points, key=lambda p: p.payload.get("page_number") or 0)
+    return "\n\n".join(p.payload["text"] for p in ordered)
 
 
 def close_bid(client: QdrantClient, bid_id: str) -> None:

@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Handshake } from 'lucide-react'
+import { ShieldCheck } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import Nav from '../components/Nav'
 import GradientBackdrop from '../components/GradientBackdrop'
 
-export default function BidderLogin() {
+export default function AdminLogin() {
   const { login, logout } = useAuth()
   const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
@@ -22,16 +22,16 @@ export default function BidderLogin() {
     try {
       const userRole = await login(email, password)
       // The backend only checks email+password, not which login page was
-      // used -- a buyer/admin's correct credentials would otherwise
+      // used -- a buyer/bidder's correct credentials would otherwise
       // "succeed" here too, just to get silently redirected away later by
       // the dashboard's own role guard. Reject it right here instead, with
       // a real error, and roll back the session login() just applied.
-      if (userRole !== 'bidder') {
+      if (userRole !== 'admin') {
         logout()
-        setError('This account is not a bidder account. Use the login page for your account type.')
+        setError('This account is not an admin account. Use the login page for your account type.')
         return
       }
-      navigate('/bidder/dashboard')
+      navigate('/admin/dashboard')
     } catch {
       setError('Invalid email or password.')
     } finally {
@@ -53,12 +53,10 @@ export default function BidderLogin() {
         >
           <div className="flex flex-col items-center text-center">
             <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-accent">
-              <Handshake size={20} />
+              <ShieldCheck size={20} />
             </span>
-            <h1 className="mt-4 text-xl font-semibold text-ink">Bidder Login</h1>
-            <p className="mt-1 text-sm text-subtle">
-              Sign in to see published RFPs and what you need to submit.
-            </p>
+            <h1 className="mt-4 text-xl font-semibold text-ink">Admin Login</h1>
+            <p className="mt-1 text-sm text-subtle">Sign in to manage the norm knowledge base.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">
@@ -103,13 +101,6 @@ export default function BidderLogin() {
               {submitting ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
-
-          <p className="mt-6 text-center text-xs text-subtle">
-            New seller?{' '}
-            <Link to="/bidder/signup" className="font-medium text-accent hover:underline">
-              Create an account
-            </Link>
-          </p>
         </motion.div>
       </div>
     </div>

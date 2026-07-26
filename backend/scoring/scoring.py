@@ -6,21 +6,38 @@ system meant to be fully unit-tested with fixtures (see
 tests/test_scoring.py), not exercised against a live model.
 
 Stage 1 (technical gate), per bidder: any mandatory criterion with verdict
-'fail' -> the bidder is out. Mandatory 'not_found' -> held for human
-review, never auto-failed -- same "don't guess, ask a human" discipline
-used everywhere else evidence is uncertain (Checkpoint A's override flow,
-the document-completeness checklist). A technical_score is also computed,
-but only from technical/financial/other criteria -- eligibility criteria
-are treated as gate-only (mandatory/binary), not part of the weighted
-score, per the plan's scoring design.
+'fail' OR 'partial' -> the bidder is out. Mandatory criteria are a binary
+gate, not a scored one -- GeM's own technical evaluation gives no partial
+credit at this stage (a mismatch on a "must/shall" requirement is fatal,
+even a single one), so 'partial' compliance with a mandatory requirement
+is still non-compliance, same as an outright 'fail'. This is different
+from a non-mandatory ("preferred") criterion, where 'partial' earns half
+credit in technical_score below rather than disqualifying anyone -- the
+gate is binary, the score is graded, and mandatory/category is what
+decides which regime a given criterion falls under. Mandatory 'not_found'
+-> held for human review, never auto-failed -- same "don't guess, ask a
+human" discipline used everywhere else evidence is uncertain (Checkpoint
+A's override flow, the document-completeness checklist): unlike 'partial'
+(the model found real, relevant content that still falls short), an
+absence of any matching content could be a genuine failure or could be a
+retrieval miss, so it isn't given the same automatic-fail treatment.
+A technical_score is also computed, but only from technical/financial/
+other criteria -- eligibility criteria are treated as gate-only
+(mandatory/binary), not part of the weighted score, per the plan's
+scoring design.
 
-Stage 2 (rank), for Stage-1 survivors only: MII filter -> price rank ->
-MSE price-match. L1 (lowest price wins) only -- QCBS (price + technical
-quality blended) was deliberately left out of this build: every real RFP
-processed so far uses L1, nothing extracts evaluation_method from RFP text
-yet, and QCBS's weighting/quality-definition questions were still open
-during design, not confidently resolved. Tracked as deferred in
-ROADMAP.md, not silently missing.
+Stage 2 (rank), for Stage-1 survivors only, branches on the RFP's own
+evaluation_method (now extracted from its "Evaluation Method" field, see
+extract_rfp_criteria.py -- defaults to L1 if absent/ambiguous, since L1 is
+the only value seen in real documents so far):
+  - L1: MII filter -> price rank -> MSE price-match. score_stage2() below.
+  - QCBS (price + technical quality blended): MII filter -> blend each
+    Stage-1-passed bid's technical_score with a price_score into one
+    final_score, ranked descending. score_stage2_qcbs() below. Built once
+    a real RFP's evaluation_method extraction made the branch meaningful
+    to reach; no real QCBS RFP has been seen yet to validate the default
+    70/30 technical/price weighting against, so treat that default as a
+    placeholder until a real one is found, not a confirmed GeM constant.
 
 A price tie for L1 is surfaced, and resolved only via run_l1_selection()
 below -- an explicit action, not automatic. This mirrors GeM's own real,
@@ -36,10 +53,12 @@ The MSE price-band percentage and quantity-split ratio are NOT hardcoded
 -- the real NIELIT RFP proved a single RFP can override the general
 policy's default (25% band, 25/75 split per the 2012 Policy Order) with
 its own bid-specific ATC clause (this RFP: 15% band, 60/40 split) -- so
-both are required parameters here, not assumed constants. Pulling those
-numbers out of an RFP's raw clause text automatically is a separate,
-not-yet-built extraction step; this module only does the arithmetic once
-the numbers are known.
+both are required parameters here, not assumed constants. Now sourced
+from extract_rfp_criteria.py's _extract_mse_preference_params() (verified
+against a second real RFP: 15% band, 25% share), falling back to None
+(no price-match computed) when an RFP doesn't state its own numbers --
+this module only does the arithmetic once the numbers are known, it never
+guesses them.
 """
 import random
 
@@ -60,7 +79,7 @@ class Stage1Result(BaseModel):
     passed: bool
     blocked_pending_review: bool  # passed, but a mandatory criterion is still awaiting human review
     technical_score: float  # 0-100, over technical/financial/other criteria only
-    failed_criteria: list[str] = []  # criterion_ids that failed a mandatory check
+    failed_criteria: list[str] = []  # criterion_ids that failed (verdict fail or partial) a mandatory check
     pending_criteria: list[str] = []  # criterion_ids that are not_found on a mandatory check
 
 
@@ -74,7 +93,7 @@ def score_stage1(criteria: list[Criterion], evidence: list[EvidenceItem]) -> Sta
         if not c.mandatory:
             continue
         verdict = evidence_by_criterion[c.id].verdict if c.id in evidence_by_criterion else "not_found"
-        if verdict == "fail":
+        if verdict in ("fail", "partial"):
             failed_criteria.append(c.id)
         elif verdict == "not_found":
             pending_criteria.append(c.id)
@@ -234,3 +253,53 @@ def score_stage2(
         )
 
     return result
+
+
+# Placeholder default -- no real QCBS RFP has been seen yet to confirm
+# GeM's typical split against; see module docstring. Always overridable by
+# a caller that has the RFP's own stated weights.
+_DEFAULT_QCBS_TECHNICAL_WEIGHT = 0.7
+_DEFAULT_QCBS_PRICE_WEIGHT = 0.3
+
+
+class QcbsResult(BaseModel):
+    ranking: list[dict]  # [{bid_id, price, technical_score, price_score, final_score}], final_score descending
+    winner: str | None = None
+    technical_weight: float = _DEFAULT_QCBS_TECHNICAL_WEIGHT
+    price_weight: float = _DEFAULT_QCBS_PRICE_WEIGHT
+
+
+def score_stage2_qcbs(
+    bids: list[BidInput],
+    technical_scores: dict[str, float],
+    technical_weight: float = _DEFAULT_QCBS_TECHNICAL_WEIGHT,
+    price_weight: float = _DEFAULT_QCBS_PRICE_WEIGHT,
+) -> QcbsResult:
+    """QCBS: unlike L1, a bid's technical_score (from score_stage1) keeps
+    mattering after the Stage 1 gate -- it's blended with a price_score
+    (cheapest of the Stage-1-qualified, MII-local bidders scores 100,
+    others proportionally less) into one final_score, ranked descending.
+    technical_scores maps bid_id -> the technical_score already computed
+    by score_stage1 -- this function doesn't recompute it, just consumes
+    it, same "one calculation, two consumers" relationship described in
+    this module's docstring."""
+    mii_filtered = [b for b in bids if b.is_mii_local]
+    if not mii_filtered:
+        return QcbsResult(ranking=[], technical_weight=technical_weight, price_weight=price_weight)
+
+    lowest_price = min(b.price for b in mii_filtered)
+    ranking = []
+    for b in mii_filtered:
+        price_score = (lowest_price / b.price) * 100
+        tech_score = technical_scores.get(b.bid_id, 0.0)
+        final_score = technical_weight * tech_score + price_weight * price_score
+        ranking.append({
+            "bid_id": b.bid_id, "price": b.price, "technical_score": tech_score,
+            "price_score": round(price_score, 2), "final_score": round(final_score, 2),
+        })
+    ranking.sort(key=lambda r: -r["final_score"])
+
+    return QcbsResult(
+        ranking=ranking, winner=ranking[0]["bid_id"],
+        technical_weight=technical_weight, price_weight=price_weight,
+    )
