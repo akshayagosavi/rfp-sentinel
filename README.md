@@ -86,7 +86,9 @@ In three separate terminals, from the repo root:
 docker compose up -d                            # Postgres + Qdrant
 ```
 ```bash
-./venv/bin/uvicorn backend.main:app --reload    # backend — wait for "Application startup complete"
+./venv/bin/uvicorn backend.main:app --reload    # backend — wait for "Application startup 
+./venv/bin/uvicorn backend.main:app --reload --host 0.0.0.0
+complete"
 ```
 ```bash
 cd frontend && npm run dev                      # frontend — http://localhost:5173

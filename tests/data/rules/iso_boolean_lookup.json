@@ -1,0 +1,5 @@
+{
+  "type": "lookup",
+  "field": "has_iso_27001",
+  "table": {"true": 10, "false": 0}
+}

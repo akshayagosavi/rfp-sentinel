@@ -27,6 +27,7 @@ from backend.db import (
 from backend.graph.retrieve_and_extract_evidence import retrieve_and_extract_evidence
 from backend.logging_config import get_logger
 from backend.models.rfp import StructuredRFP
+from backend.rag.embeddings import embed_text
 from backend.scoring.scoring import score_stage1
 
 logger = get_logger(__name__)
@@ -36,10 +37,19 @@ def run_stage1_evaluation(pool, rfp_id: str, structured_rfp: StructuredRFP) -> N
     bid_ids = list_bid_ids_for_rfp(pool, rfp_id)
     logger.info("run_stage1_evaluation(rfp_id=%r): %d bid(s) to evaluate", rfp_id, len(bid_ids))
 
+    # Each criterion's text is fixed for the whole run (criteria were
+    # already approved back at Checkpoint A) -- embed each one exactly
+    # once here, in memory, and reuse it across every bid below, instead of
+    # retrieve_and_extract_evidence() re-embedding the same text once per
+    # bid. Lives only for this function call; nothing persisted, nothing to
+    # invalidate.
+    criterion_vectors = {c.id: embed_text(c.text) for c in structured_rfp.criteria}
+    logger.info("run_stage1_evaluation(rfp_id=%r): embedded %d criteria once for this run", rfp_id, len(criterion_vectors))
+
     for bid_id in bid_ids:
         try:
             mark_bid_under_evaluation(pool, bid_id)
-            evidence = retrieve_and_extract_evidence(bid_id, structured_rfp)
+            evidence = retrieve_and_extract_evidence(bid_id, structured_rfp, criterion_vectors)
             save_bid_evidence(pool, bid_id, [e.model_dump() for e in evidence])
             result = score_stage1(structured_rfp.criteria, evidence)
             save_stage1_result(pool, bid_id, result.model_dump())

@@ -98,7 +98,32 @@ CREATE TABLE IF NOT EXISTS bid_evidence (
     resolution_reasoning TEXT,   -- required alongside it, same audit-trail discipline as
     resolved_at TIMESTAMPTZ,     -- Criterion.override_reasoning at Checkpoint A. NULL until resolved;
                                   -- when set, this -- not the original LLM verdict -- decides Stage 1.
+    rule_result JSONB,          -- EvidenceItem.rule_result -- {score, max_score, matched}, set only
+                                  -- when this criterion has a Rule. Must be carried through by every
+                                  -- reader that reconstructs an EvidenceItem (see resolve_pending_evidence
+                                  -- in backend/api/rfp.py) -- dropping it silently reverts a rule-scored
+                                  -- criterion's technical_score contribution back to the plain verdict
+                                  -- average on the next recompute.
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- A bidder raising a concern about a published RFP -- mirrors real GeM's
+-- pre-bid query/clarification mechanism. Deliberately separate from the
+-- Checkpoint A compliance flags surfaced to admin (get_flagged_rfps):
+-- those are the SYSTEM's own AI-detected issues found before publication;
+-- this is a bidder's own judgment raised afterward, and needs its own
+-- record and resolution trail, not to be folded into that other audit.
+CREATE TABLE IF NOT EXISTS rfp_flags (
+    id SERIAL PRIMARY KEY,
+    rfp_id TEXT NOT NULL REFERENCES rfps(rfp_id),
+    bidder_user_id INTEGER NOT NULL REFERENCES users(id),
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+    resolution_note TEXT,       -- required before a flag can be marked resolved -- same
+                                -- "a decision needs a recorded reason" discipline as
+                                -- Checkpoint A's override_reasoning and evidence resolution.
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at TIMESTAMPTZ
 );
 """
 
@@ -125,6 +150,7 @@ def setup_tables(pool: ConnectionPool) -> None:
         conn.execute("ALTER TABLE bid_evidence ADD COLUMN IF NOT EXISTS resolved_verdict TEXT")
         conn.execute("ALTER TABLE bid_evidence ADD COLUMN IF NOT EXISTS resolution_reasoning TEXT")
         conn.execute("ALTER TABLE bid_evidence ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ")
+        conn.execute("ALTER TABLE bid_evidence ADD COLUMN IF NOT EXISTS rule_result JSONB")
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
         conn.execute("ALTER TABLE rfps ADD COLUMN IF NOT EXISTS summary TEXT")
         # One bid per bidder per RFP for now -- no amend/resubmit flow yet
@@ -228,7 +254,7 @@ def get_rfp_record(pool: ConnectionPool, rfp_id: str) -> dict | None:
         row = conn.execute(
             """
             SELECT r.rfp_id, r.title, r.category, r.closing_date, r.status, u.org_name AS buyer_org,
-                   r.gem_bid_number, r.stage2_result, r.summary
+                   r.gem_bid_number, r.stage2_result, r.summary, u.email AS buyer_email
             FROM rfps r JOIN users u ON u.id = r.buyer_user_id
             WHERE r.rfp_id = %s
             """,
@@ -238,7 +264,7 @@ def get_rfp_record(pool: ConnectionPool, rfp_id: str) -> dict | None:
         return None
     return {"rfp_id": row[0], "title": row[1], "category": row[2], "closing_date": row[3].isoformat(),
             "status": row[4], "buyer_org": row[5], "gem_bid_number": row[6], "stage2_result": row[7],
-            "summary": row[8]}
+            "summary": row[8], "buyer_email": row[9]}
 
 
 def save_rfp_summary(pool: ConnectionPool, rfp_id: str, summary: str) -> None:
@@ -386,6 +412,22 @@ def list_bid_ids_for_rfp(pool: ConnectionPool, rfp_id: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def delete_rfp(pool: ConnectionPool, rfp_id: str) -> None:
+    """Hard delete -- the buyer's own 'delete this RFP' action
+    (backend/api/rfp.py), only ever allowed when there are no bids yet or
+    evaluation has already fully concluded. Deletes in FK order:
+    bid_evidence -> bids -> rfps. Qdrant chunks, LangGraph checkpoint state,
+    and files on disk are the caller's separate responsibility -- this only
+    owns the Postgres side."""
+    with pool.connection() as conn:
+        conn.execute(
+            "DELETE FROM bid_evidence WHERE bid_id IN (SELECT bid_id FROM bids WHERE rfp_id = %s)",
+            (rfp_id,),
+        )
+        conn.execute("DELETE FROM bids WHERE rfp_id = %s", (rfp_id,))
+        conn.execute("DELETE FROM rfps WHERE rfp_id = %s", (rfp_id,))
+
+
 def mark_bid_under_evaluation(pool: ConnectionPool, bid_id: str) -> None:
     with pool.connection() as conn:
         conn.execute("UPDATE bids SET status = 'under_evaluation' WHERE bid_id = %s", (bid_id,))
@@ -400,11 +442,12 @@ def save_bid_evidence(pool: ConnectionPool, bid_id: str, evidence: list[dict]) -
         for item in evidence:
             conn.execute(
                 """
-                INSERT INTO bid_evidence (bid_id, criterion_id, verdict, reasoning, citation)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO bid_evidence (bid_id, criterion_id, verdict, reasoning, citation, rule_result)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (bid_id, item["criterion_id"], item["verdict"], item.get("reasoning"),
-                 json.dumps(item["citation"]) if item.get("citation") else None),
+                 json.dumps(item["citation"]) if item.get("citation") else None,
+                 json.dumps(item["rule_result"]) if item.get("rule_result") else None),
             )
 
 
@@ -418,7 +461,7 @@ def get_bid_evidence(pool: ConnectionPool, bid_id: str) -> list[dict]:
         rows = conn.execute(
             """
             SELECT criterion_id, verdict, reasoning, citation, resolved_verdict,
-                   resolution_reasoning, resolved_at
+                   resolution_reasoning, resolved_at, rule_result
             FROM bid_evidence WHERE bid_id = %s
             """,
             (bid_id,),
@@ -429,6 +472,7 @@ def get_bid_evidence(pool: ConnectionPool, bid_id: str) -> list[dict]:
             "resolved_verdict": r[4], "resolution_reasoning": r[5],
             "resolved_at": r[6].isoformat() if r[6] else None,
             "effective_verdict": r[4] or r[1],
+            "rule_result": r[7],
         }
         for r in rows
     ]
@@ -569,3 +613,49 @@ def is_user_active(pool: ConnectionPool, email: str) -> bool:
     with pool.connection() as conn:
         row = conn.execute("SELECT is_active FROM users WHERE email = %s", (email,)).fetchone()
     return bool(row and row[0])
+
+
+def create_rfp_flag(pool: ConnectionPool, rfp_id: str, bidder_email: str, message: str) -> int:
+    """A bidder's pre-bid query/concern about a published RFP -- see
+    rfp_flags' schema comment for why this is deliberately separate from
+    the Checkpoint A compliance-flag audit trail. Returns the new flag's id."""
+    with pool.connection() as conn:
+        bidder_row = conn.execute("SELECT id FROM users WHERE email = %s", (bidder_email,)).fetchone()
+        if bidder_row is None:
+            raise ValueError(f"No user record for bidder {bidder_email!r}")
+        row = conn.execute(
+            "INSERT INTO rfp_flags (rfp_id, bidder_user_id, message) VALUES (%s, %s, %s) RETURNING id",
+            (rfp_id, bidder_row[0], message),
+        ).fetchone()
+    return row[0]
+
+
+def list_rfp_flags(pool: ConnectionPool, rfp_id: str) -> list[dict]:
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT f.id, f.message, f.status, f.resolution_note, f.created_at, f.resolved_at, u.org_name
+            FROM rfp_flags f JOIN users u ON u.id = f.bidder_user_id
+            WHERE f.rfp_id = %s
+            ORDER BY f.created_at DESC
+            """,
+            (rfp_id,),
+        ).fetchall()
+    return [
+        {"id": r[0], "message": r[1], "status": r[2], "resolution_note": r[3],
+         "created_at": r[4].isoformat(), "resolved_at": r[5].isoformat() if r[5] else None,
+         "bidder_org": r[6]}
+        for r in rows
+    ]
+
+
+def resolve_rfp_flag(pool: ConnectionPool, flag_id: int, resolution_note: str) -> bool:
+    """Requires a real note, same audit-trail discipline as Checkpoint A's
+    override_reasoning and evidence resolution -- resolving isn't just
+    dismissing, it's recording why. Returns False if flag_id doesn't exist."""
+    with pool.connection() as conn:
+        row = conn.execute(
+            "UPDATE rfp_flags SET status = 'resolved', resolution_note = %s, resolved_at = now() WHERE id = %s RETURNING id",
+            (resolution_note, flag_id),
+        ).fetchone()
+    return row is not None

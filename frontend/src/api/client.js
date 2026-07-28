@@ -109,6 +109,21 @@ export async function submitBid(rfpId, files, financialDocument) {
   return data
 }
 
+export async function flagRfp(rfpId, message) {
+  const { data } = await client.post(`/bidder/rfps/${rfpId}/flag`, { message })
+  return data
+}
+
+export async function getRfpFlags(rfpId) {
+  const { data } = await client.get(`/rfp/${rfpId}/flags`)
+  return data.flags
+}
+
+export async function resolveRfpFlag(rfpId, flagId, resolutionNote) {
+  const { data } = await client.post(`/rfp/${rfpId}/flags/${flagId}/resolve`, { resolution_note: resolutionNote })
+  return data
+}
+
 export async function uploadRfp(file) {
   const form = new FormData()
   form.append('file', file)
@@ -141,6 +156,11 @@ export async function closeRfp(rfpId) {
   return data
 }
 
+export async function deleteRfp(rfpId) {
+  const { data } = await client.delete(`/rfp/${rfpId}`)
+  return data
+}
+
 export async function getEvaluation(rfpId) {
   const { data } = await client.get(`/rfp/${rfpId}/evaluation`)
   return data
@@ -152,6 +172,30 @@ export async function resolvePendingEvidence(rfpId, bidId, criterionId, verdict,
     { verdict, reasoning },
   )
   return data
+}
+
+export async function getBidDocuments(rfpId, bidId) {
+  const { data } = await client.get(`/rfp/${rfpId}/bids/${bidId}/documents`)
+  return data
+}
+
+// A plain <a href> or window.open() can't attach an Authorization header,
+// and this endpoint is JWT-gated like everything else under /rfp -- so the
+// file is fetched through the same authenticated axios client as a blob,
+// then handed to the browser as a throwaway object URL. Keeps the token in
+// the header only, never in a URL (which would otherwise end up in browser
+// history / server access logs).
+export async function downloadBidDocument(rfpId, bidId, filename) {
+  const { data } = await client.get(
+    `/rfp/${rfpId}/bids/${bidId}/documents/${encodeURIComponent(filename)}`,
+    { responseType: 'blob' },
+  )
+  const url = URL.createObjectURL(data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 export async function openFinancialBids(rfpId) {
@@ -174,6 +218,19 @@ export async function updateNormStatus(normName, status) {
   return data
 }
 
+export async function uploadNorm(file, normName, version, effectiveDate) {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('norm_name', normName)
+  if (version) form.append('version', version)
+  if (effectiveDate) form.append('effective_date', effectiveDate)
+  // Real ingestion of a full document (chunking + embedding every chunk)
+  // takes 1-2 minutes -- axios has no default timeout, so this deliberately
+  // waits for the real result rather than erroring out early.
+  const { data } = await client.post('/admin/norms/upload', form)
+  return data
+}
+
 export async function getUsers() {
   const { data } = await client.get('/admin/users')
   return data.users
@@ -181,6 +238,11 @@ export async function getUsers() {
 
 export async function setUserActive(userId, isActive) {
   const { data } = await client.post(`/admin/users/${userId}/active`, { is_active: isActive })
+  return data
+}
+
+export async function createBuyer(email, password, orgName) {
+  const { data } = await client.post('/admin/users/buyer', { email, password, org_name: orgName })
   return data
 }
 

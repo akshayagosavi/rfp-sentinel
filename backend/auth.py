@@ -71,6 +71,28 @@ def create_bidder(pool: ConnectionPool, email: str, password: str, org_name: str
     return row[0]
 
 
+def create_buyer(pool: ConnectionPool, email: str, password: str, org_name: str) -> int:
+    """Unlike bidders, buyers don't get open self-signup -- a buyer account
+    represents an authorized government department publishing real tenders,
+    not something anyone should be able to claim by registering. This is
+    only ever called from an admin-gated endpoint (backend/api/admin.py),
+    same 'provisioned, not self-signed-up' discipline already used for
+    admin accounts (see db.py's seed_demo_users)."""
+    with pool.connection() as conn:
+        try:
+            row = conn.execute(
+                """
+                INSERT INTO users (email, password_hash, role, org_name)
+                VALUES (%s, %s, 'buyer', %s)
+                RETURNING id
+                """,
+                (email, hash_password(password), org_name),
+            ).fetchone()
+        except psycopg.errors.UniqueViolation:
+            raise ValueError("An account with this email already exists")
+    return row[0]
+
+
 def create_access_token(email: str, role: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRE_HOURS)
     return jwt.encode({"sub": email, "role": role, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)

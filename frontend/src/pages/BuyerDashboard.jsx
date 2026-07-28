@@ -11,6 +11,13 @@ import { KpiCard, KpiStrip } from '../components/KpiStrip'
 
 const POLL_INTERVAL_MS = 4000
 
+// Real extraction can legitimately take a couple of minutes before its
+// first checkpoint saves (concurrent LLM calls over every clause) -- this
+// grace window is deliberately generous so a slow real upload is never
+// mistaken for a deleted one, while still eventually giving up on an id
+// that will actually never come back.
+const NOT_FOUND_GIVE_UP_MS = 5 * 60 * 1000
+
 // Persists the in-flight rfp_id across navigation/reload so coming back to
 // this page resumes tracking it instead of showing the upload form again --
 // that gap is what caused an accidental double-upload (and doubled CPU load
@@ -214,7 +221,20 @@ export default function BuyerDashboard() {
       // A 404 right after upload just means the background extraction job
       // hasn't saved its first checkpoint yet -- id is known-valid (we just
       // got it back from /upload), so keep polling instead of failing.
+      // BUT a 404 can now also mean this RFP was actually deleted (see the
+      // buyer's "Delete RFP" action) -- that id will never come back, so
+      // retrying forever left a real bug: a deleted RFP's tab polls
+      // indefinitely, showing "Evaluating..." with an elapsed timer running
+      // into the hours. Bound the grace period to how long a real
+      // extraction could plausibly still be starting up -- past that, a
+      // persistent 404 means gone, not "not yet," so stop and say so.
       if (err.response?.status === 404) {
+        if (startedAt && Date.now() - startedAt > NOT_FOUND_GIVE_UP_MS) {
+          localStorage.removeItem(ACTIVE_EVALUATION_KEY)
+          setPhase('error')
+          setErrorMessage('This RFP could not be found -- it may have been deleted.')
+          return
+        }
         pollTimer.current = setTimeout(() => pollUntilReady(id), POLL_INTERVAL_MS)
         return
       }

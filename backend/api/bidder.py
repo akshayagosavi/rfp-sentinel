@@ -16,9 +16,16 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel
 
 from backend.auth import get_current_bidder
-from backend.db import create_bid_record, get_rfp_record, has_bidder_applied, list_bidder_bids
+from backend.db import (
+    create_bid_record,
+    create_rfp_flag,
+    get_rfp_record,
+    has_bidder_applied,
+    list_bidder_bids,
+)
 from backend.graph.check_document_completeness import check_document_completeness
 from backend.rag.qdrant_client import ensure_bids_collection, get_client
 from ingestion.ingest_bid import ingest_bid
@@ -35,6 +42,33 @@ def _config(rfp_id: str) -> dict:
 @router.get("/my-bids")
 def my_bids(request: Request, bidder_email: str = Depends(get_current_bidder)):
     return {"bids": list_bidder_bids(request.app.state.db_pool, bidder_email)}
+
+
+class FlagRfpRequest(BaseModel):
+    message: str
+
+
+@router.post("/rfps/{rfp_id}/flag")
+def flag_rfp(
+    rfp_id: str, body: FlagRfpRequest, request: Request, bidder_email: str = Depends(get_current_bidder),
+):
+    """A bidder raising a pre-bid query/concern about a tender -- e.g. an
+    ambiguous requirement or something that looks like a mistake the
+    automated Checkpoint A checks didn't catch. Only while the RFP is
+    still open (published): once bidding closes there's nothing left for
+    the buyer to act on by flagging it."""
+    if not body.message.strip():
+        raise HTTPException(422, "message is required")
+
+    pool = request.app.state.db_pool
+    record = get_rfp_record(pool, rfp_id)
+    if record is None:
+        raise HTTPException(404, "rfp_id not found")
+    if record["status"] != "published":
+        raise HTTPException(409, "Can only flag an RFP that's currently open for bidding")
+
+    flag_id = create_rfp_flag(pool, rfp_id, bidder_email, body.message.strip())
+    return {"flag_id": flag_id, "status": "open"}
 
 
 @router.post("/bids/{rfp_id}/submit")

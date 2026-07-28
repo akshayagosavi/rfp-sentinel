@@ -19,12 +19,16 @@ publish-with-overrides flow, which requires reasoning for every flagged
 criterion before a flagged RFP can even be published) -- this is the first
 place it's surfaced outside that one-time approval moment, for audit.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+import json
+import uuid
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
-from backend.auth import get_current_admin
+from backend.auth import create_buyer, get_current_admin
 from backend.db import get_user_by_id, list_all_users, list_published_rfps, set_user_active
-from backend.rag.qdrant_client import get_client, list_norms, mark_status
+from backend.rag.qdrant_client import ensure_norms_collection, get_client, list_norms, mark_status
+from ingestion.ingest_norms import MANIFEST_PATH, NORMS_DIR, doc_id_for, ingest_document
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -34,6 +38,58 @@ _VALID_STATUSES = {"active", "superseded", "withdrawn"}
 @router.get("/norms")
 def get_norms():
     return {"norms": list_norms(get_client())}
+
+
+@router.post("/norms/upload")
+async def upload_norm(
+    file: UploadFile,
+    norm_name: str = Form(...),
+    version: str | None = Form(None),
+    effective_date: str | None = Form(None),
+):
+    """Adds a brand-new norm document to the knowledge base -- previously
+    the only way to do this was hand-editing data/norms/manifest.json and
+    running the CLI ingestion script directly (ingestion/ingest_norms.py).
+
+    Deliberately synchronous, not a background task like RFP upload:
+    unlike RFP evaluation, there's no existing status-tracking mechanism
+    (no LangGraph checkpoint) to poll against here, and this is a rare,
+    deliberate admin action, not a high-frequency one -- blocking for the
+    roughly 1-2 minutes a real document takes to ingest is a simpler,
+    honest trade-off against building a whole new job-tracking mechanism
+    from scratch for just this one endpoint."""
+    if not norm_name.strip():
+        raise HTTPException(422, "norm_name is required")
+
+    dest_filename = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    (NORMS_DIR / dest_filename).write_bytes(await file.read())
+
+    entry = {
+        "filename": dest_filename,
+        "norm_name": norm_name.strip(),
+        "status": "active",
+        "version": version.strip() if version else None,
+        "effective_date": effective_date.strip() if effective_date else None,
+    }
+
+    manifest = json.loads(MANIFEST_PATH.read_text())
+    manifest["documents"].append(entry)
+    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
+
+    client = get_client()
+    ensure_norms_collection(client)
+    try:
+        chunk_count = ingest_document(client, entry)
+    except Exception as e:
+        # The file and manifest entry are already saved -- an admin can
+        # retry ingestion later (e.g. via the CLI) without re-uploading,
+        # rather than this failure silently losing their upload.
+        raise HTTPException(500, f"Saved, but ingestion failed: {e}")
+
+    return {
+        "filename": dest_filename, "norm_name": entry["norm_name"],
+        "doc_id": doc_id_for(entry), "chunks": chunk_count, "status": "active",
+    }
 
 
 class UpdateNormStatusRequest(BaseModel):
@@ -51,6 +107,28 @@ def update_norm_status(norm_name: str, body: UpdateNormStatusRequest):
 @router.get("/users")
 def get_users(request: Request):
     return {"users": list_all_users(request.app.state.db_pool)}
+
+
+class CreateBuyerRequest(BaseModel):
+    email: str
+    password: str
+    org_name: str
+
+
+@router.post("/users/buyer")
+def create_buyer_endpoint(body: CreateBuyerRequest, request: Request):
+    """Buyers don't get open self-signup (see create_buyer()'s docstring
+    for why) -- this is the provisioning path instead, gated to admin like
+    every other endpoint in this router. Fixes the real limitation that
+    previously only one buyer account (the seeded demo one) could ever
+    exist at all."""
+    if not body.email.strip() or not body.password.strip() or not body.org_name.strip():
+        raise HTTPException(422, "email, password, and org_name are all required")
+    try:
+        user_id = create_buyer(request.app.state.db_pool, body.email.strip(), body.password, body.org_name.strip())
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"id": user_id, "email": body.email.strip(), "role": "buyer", "org_name": body.org_name.strip()}
 
 
 class SetUserActiveRequest(BaseModel):

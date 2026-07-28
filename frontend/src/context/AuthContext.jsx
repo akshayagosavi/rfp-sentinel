@@ -9,6 +9,18 @@ import {
 const AuthContext = createContext(null)
 const ROLE_KEY = 'rfp_sentinel_role'
 
+// BuyerDashboard.jsx's own in-flight-evaluation tracker -- lives in
+// localStorage, which is per-browser, not per-account. Without clearing it
+// here, switching buyer accounts in the same browser (logout, then log in
+// as someone else) left the PREVIOUS account's last "RFP published
+// successfully" card showing on the new account's dashboard -- stale
+// client-side state, not a real server response (the server-side
+// ownership check on the actual RFP data was already correct; this key
+// just wasn't part of the session boundary at all). Cleared both at
+// logout and at the start of a fresh session, so it can never survive
+// into a different account's session either way.
+const ACTIVE_EVALUATION_KEY = 'rfp_sentinel_active_evaluation'
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
   const [role, setRole] = useState(() => localStorage.getItem(ROLE_KEY))
@@ -32,6 +44,7 @@ export function AuthProvider({ children }) {
   function _applySession(accessToken, userRole) {
     localStorage.setItem(TOKEN_KEY, accessToken)
     localStorage.setItem(ROLE_KEY, userRole)
+    localStorage.removeItem(ACTIVE_EVALUATION_KEY)
     setToken(accessToken)
     setRole(userRole)
     return userRole
@@ -50,6 +63,7 @@ export function AuthProvider({ children }) {
   function logout() {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(ROLE_KEY)
+    localStorage.removeItem(ACTIVE_EVALUATION_KEY)
     setToken(null)
     setRole(null)
   }
