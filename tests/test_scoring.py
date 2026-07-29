@@ -97,6 +97,51 @@ def test_stage1_technical_score_zero_when_nothing_scored():
     assert result.technical_score == 0.0
 
 
+# --- Stage 1: rule-based scoring (milestone 3 of the rule-engine redesign) ---
+
+
+def _rule_evidence(criterion_id, verdict, score, max_score, bid_id="bid-1"):
+    return EvidenceItem(
+        criterion_id=criterion_id, bid_id=bid_id, verdict=verdict,
+        rule_result={"score": score, "max_score": max_score, "matched": {"kind": "tier", "detail": {}}},
+    )
+
+
+def test_stage1_rule_result_used_instead_of_verdict_score():
+    # A single rule-scored criterion earning 15/20 marks -> 75%, NOT the
+    # crude verdict-average (which would just be 100% for a "pass").
+    criteria = [_criterion("c1", mandatory=False, category="technical")]
+    evidence = [_rule_evidence("c1", "pass", score=15, max_score=20)]
+    result = score_stage1(criteria, evidence)
+    assert result.technical_score == 75.0
+
+
+def test_stage1_blends_rule_scored_and_verdict_scored_criteria():
+    # c1 has a real rule (15/20 marks); c2 has no rule and falls back to
+    # today's implicit weight-of-1 verdict scoring (fail -> 0/1).
+    criteria = [
+        _criterion("c1", mandatory=False, category="technical"),
+        _criterion("c2", mandatory=False, category="technical"),
+    ]
+    evidence = [_rule_evidence("c1", "pass", score=15, max_score=20), _evidence("c2", "fail")]
+    result = score_stage1(criteria, evidence)
+    # raw_sum = 15 + 0 = 15; max_sum = 20 + 1 = 21
+    assert result.technical_score == round(15 / 21 * 100, 2)
+
+
+def test_stage1_mid_tier_rule_score_does_not_affect_mandatory_gate():
+    # The exact bug the design review caught: a mandatory criterion that
+    # lands in a lower (but real) marks tier has still fully satisfied it --
+    # the gate is driven purely by verdict, never by where the rule_result's
+    # score falls relative to its own max_score.
+    criteria = [_criterion("c1", mandatory=True, category="technical")]
+    evidence = [_rule_evidence("c1", "pass", score=12, max_score=20)]  # mid-tier score, but verdict=pass
+    result = score_stage1(criteria, evidence)
+    assert result.passed is True
+    assert result.failed_criteria == []
+    assert result.technical_score == 60.0  # 12/20 * 100 -- scoring and gating are independent numbers
+
+
 # --- Stage 2: MII filter, price ranking, ties ---
 
 
@@ -136,6 +181,17 @@ def test_stage2_no_tie_when_unique_lowest():
     ]
     result = score_stage2(bids)
     assert result.tied_for_l1 == []
+
+
+def test_stage2_mii_restricted_false_includes_non_local():
+    # An RFP that doesn't restrict to Class-I/II local suppliers only --
+    # a non-local bidder should be ranked normally, not silently dropped.
+    bids = [
+        BidInput(bid_id="local", price=100, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="foreign", price=50, is_mii_local=False, is_mse=False),
+    ]
+    result = score_stage2(bids, mii_restricted=False)
+    assert [b["bid_id"] for b in result.ranking] == ["foreign", "local"]
 
 
 def test_stage2_mse_price_match_skipped_without_params():
@@ -291,3 +347,12 @@ def test_qcbs_missing_technical_score_defaults_to_zero():
     bids = [BidInput(bid_id="b1", price=100, is_mii_local=True, is_mse=False)]
     result = score_stage2_qcbs(bids, {})  # no technical_score recorded for b1
     assert result.ranking[0]["technical_score"] == 0.0
+
+
+def test_qcbs_mii_restricted_false_includes_non_local():
+    bids = [
+        BidInput(bid_id="local", price=100, is_mii_local=True, is_mse=False),
+        BidInput(bid_id="foreign", price=50, is_mii_local=False, is_mse=False),
+    ]
+    result = score_stage2_qcbs(bids, {"local": 80, "foreign": 90}, mii_restricted=False)
+    assert {r["bid_id"] for r in result.ranking} == {"local", "foreign"}

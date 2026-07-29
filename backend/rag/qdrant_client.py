@@ -28,7 +28,7 @@ load_dotenv()
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 NORMS_COLLECTION = "norms"
 BIDS_COLLECTION = "bids"
-VECTOR_SIZE = 768
+VECTOR_SIZE = 1024  # bge-m3's dense embedding dimension (was 768 for nomic-embed-text)
 
 # Fixed namespace so the same doc_id + chunk_index always produces the same
 # point ID — re-running ingestion overwrites existing points instead of
@@ -83,6 +83,19 @@ def upsert_chunks(
         for i, (chunk, vector) in enumerate(zip(chunks, vectors))
     ]
     client.upsert(collection_name=NORMS_COLLECTION, points=points)
+
+
+def delete_norm_chunks(client: QdrantClient, doc_id: str) -> None:
+    """Hard delete -- removes every chunk for one doc_id outright. Needed
+    before re-ingesting a document whose chunking pipeline changed and now
+    produces fewer chunks than before: point IDs are deterministic per
+    (doc_id, chunk_index), so a shorter re-run overwrites the first N points
+    but never touches leftover higher-index points from the larger previous
+    run -- those go stale unless explicitly deleted first."""
+    client.delete(
+        collection_name=NORMS_COLLECTION,
+        points_selector=Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]),
+    )
 
 
 def mark_status(client: QdrantClient, norm_name: str, new_status: str) -> None:
@@ -273,6 +286,21 @@ def close_bid(client: QdrantClient, bid_id: str) -> None:
         collection_name=BIDS_COLLECTION,
         payload={"status": "closed", "closed_at": datetime.now(timezone.utc).isoformat()},
         points=Filter(must=[FieldCondition(key="bid_id", match=MatchValue(value=bid_id))]),
+    )
+
+
+def delete_bid_chunks(client: QdrantClient, bid_id: str) -> None:
+    """Hard delete -- distinct from close_bid()'s soft-delete-then-purge
+    design above. Used by the buyer's own 'delete this RFP' action
+    (backend/api/rfp.py), which the API layer only ever allows when there
+    are no bids yet or evaluation has already fully concluded -- removes
+    every chunk (both packets) for this bid_id outright, no retention
+    window, since the caller has already decided this data should go."""
+    if not client.collection_exists(BIDS_COLLECTION):
+        return
+    client.delete(
+        collection_name=BIDS_COLLECTION,
+        points_selector=Filter(must=[FieldCondition(key="bid_id", match=MatchValue(value=bid_id))]),
     )
 
 

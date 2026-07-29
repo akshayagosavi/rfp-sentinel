@@ -51,7 +51,7 @@ def run_stage2_evaluation(pool, rfp_id: str, structured_rfp: StructuredRFP) -> N
         logger.info("bid %r: extracted price=%s", b["bid_id"], result.price)
 
     if structured_rfp.evaluation_method == "QCBS":
-        stage2 = score_stage2_qcbs(bid_inputs, technical_scores)
+        stage2 = score_stage2_qcbs(bid_inputs, technical_scores, mii_restricted=structured_rfp.mii_restricted)
         result_dict = {**stage2.model_dump(), "evaluation_method": "QCBS"}
         logger.info(
             "run_stage2_evaluation(rfp_id=%r) done (QCBS): %d ranked, winner=%s",
@@ -62,6 +62,7 @@ def run_stage2_evaluation(pool, rfp_id: str, structured_rfp: StructuredRFP) -> N
             bid_inputs,
             price_band_percent=structured_rfp.price_band_percent,
             mse_share_percent=structured_rfp.mse_share_percent,
+            mii_restricted=structured_rfp.mii_restricted,
         )
         result_dict = {**stage2.model_dump(), "evaluation_method": "L1"}
         logger.info(

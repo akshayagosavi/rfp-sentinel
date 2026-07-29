@@ -1,24 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
   Banknote,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Download,
+  Flag,
+  FileWarning,
   Loader2,
   Lock,
   Scale,
+  Trash2,
   Trophy,
   XCircle,
 } from 'lucide-react'
 import {
   closeRfp,
+  deleteRfp,
+  downloadBidDocument,
   getBidDetail,
+  getBidDocuments,
   getCriteria,
   getEvaluation,
+  getRfpFlags,
   openFinancialBids,
   resolvePendingEvidence,
+  resolveRfpFlag,
   runL1Selection,
 } from '../api/client'
 import Nav from '../components/Nav'
@@ -52,6 +61,177 @@ function formatDate(iso) {
 
 function formatPrice(price) {
   return `₹${price.toLocaleString('en-IN')}`
+}
+
+// Lets the buyer actually see what a bidder submitted, and whether any
+// required document type is missing -- previously there was no way to do
+// either at all. Packet-II (the sealed financial document) only ever shows
+// up here once the backend itself confirms it's been unsealed (Stage 2
+// complete) -- this panel never has to know the sealing rule itself, it
+// just renders whatever the API is willing to hand back.
+function BidDocumentsPanel({ rfpId, bidId }) {
+  const [docs, setDocs] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    getBidDocuments(rfpId, bidId)
+      .then(setDocs)
+      .catch(() => setError('Could not load this bid\'s documents.'))
+  }, [rfpId, bidId])
+
+  if (error) return <p className="mt-3 text-xs text-danger">{error}</p>
+  if (!docs) return <p className="mt-3 text-xs text-subtle">Loading documents...</p>
+
+  return (
+    <div className="mt-3 rounded-md border border-line bg-canvas p-3">
+      <p className="text-xs font-semibold text-ink">Submitted documents</p>
+
+      {docs.completeness.missing.length > 0 && (
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-danger-line bg-danger-soft px-2.5 py-2 text-xs text-danger">
+          <FileWarning size={13} className="mt-0.5 shrink-0" />
+          <span>Missing required document(s): {docs.completeness.missing.join(', ')}</span>
+        </div>
+      )}
+
+      <ul className="mt-2 space-y-1">
+        {docs.packet_i_files.map((filename) => (
+          <li key={filename}>
+            <button
+              onClick={() => downloadBidDocument(rfpId, bidId, filename)}
+              className="flex items-center gap-1.5 text-xs text-accent hover:underline"
+            >
+              <Download size={12} />
+              {filename}
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-2 border-t border-line pt-2">
+        {docs.packet_ii_sealed ? (
+          <p className="flex items-center gap-1.5 text-xs text-subtle">
+            <Lock size={12} />
+            Financial document sealed until Stage 2 (Open Financial Bids) completes.
+          </p>
+        ) : (
+          docs.packet_ii_files.map((filename) => (
+            <button
+              key={filename}
+              onClick={() => downloadBidDocument(rfpId, bidId, filename)}
+              className="flex items-center gap-1.5 text-xs text-accent hover:underline"
+            >
+              <Download size={12} />
+              {filename} (financial)
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+// One bidder-raised pre-bid query/concern -- separate from anything the
+// system flagged automatically at Checkpoint A. Resolving requires a real
+// note, same audit-trail discipline as everywhere else a human makes a
+// call in this app.
+function RfpFlagItem({ flag, onResolve }) {
+  const [note, setNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleResolve(e) {
+    e.preventDefault()
+    if (!note.trim()) return
+    setSubmitting(true)
+    setError('')
+    try {
+      await onResolve(flag.id, note.trim())
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Could not resolve this flag.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <li className="rounded-md border border-line bg-canvas p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-ink">{flag.bidder_org}</p>
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+            flag.status === 'resolved'
+              ? 'border-success-line bg-success-soft text-success'
+              : 'border-accent/30 bg-accent/10 text-accent'
+          }`}
+        >
+          {flag.status === 'resolved' ? 'Resolved' : 'Open'}
+        </span>
+      </div>
+      <p className="mt-1.5 text-xs text-subtle">{flag.message}</p>
+      {flag.status === 'resolved' ? (
+        <p className="mt-1.5 text-xs text-ink">
+          <span className="font-medium">Response:</span> {flag.resolution_note}
+        </p>
+      ) : (
+        <form onSubmit={handleResolve} className="mt-2">
+          <textarea
+            required
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Your response (required to resolve)..."
+            rows={2}
+            className="w-full rounded-md border border-line bg-elevated px-2.5 py-1.5 text-xs text-ink transition-colors duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+          />
+          {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+          <button
+            type="submit"
+            disabled={submitting}
+            className="mt-1.5 rounded-md border border-line bg-surface px-3 py-1 text-xs font-medium text-ink transition-colors duration-200 hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? 'Saving...' : 'Mark resolved'}
+          </button>
+        </form>
+      )}
+    </li>
+  )
+}
+
+function RfpFlagsPanel({ rfpId }) {
+  const [flags, setFlags] = useState(null)
+  const [error, setError] = useState('')
+
+  const load = useCallback(() => {
+    getRfpFlags(rfpId)
+      .then(setFlags)
+      .catch(() => setError('Could not load bidder queries.'))
+  }, [rfpId])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleResolve(flagId, note) {
+    await resolveRfpFlag(rfpId, flagId, note)
+    load()
+  }
+
+  if (error) return <p className="mt-3 text-xs text-danger">{error}</p>
+  if (flags === null) return null
+  if (flags.length === 0) return null
+
+  const openCount = flags.filter((f) => f.status === 'open').length
+
+  return (
+    <div className="mt-6 rounded-card border border-line bg-elevated p-5">
+      <h2 className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+        <Flag size={13} className="text-subtle" />
+        Bidder queries {openCount > 0 && `(${openCount} open)`}
+      </h2>
+      <ul className="mt-3 space-y-2">
+        {flags.map((flag) => (
+          <RfpFlagItem key={flag.id} flag={flag} onResolve={handleResolve} />
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 // A mandatory criterion the model came back 'not_found' on -- content
@@ -117,6 +297,7 @@ function PendingCriterionResolver({ criterionText, onResolve }) {
 
 export default function RfpManage() {
   const { rfpId } = useParams()
+  const navigate = useNavigate()
   const [bid, setBid] = useState(null) // RFP detail, reusing the public bid-detail shape
   const [evaluation, setEvaluation] = useState(null)
   const [criteriaById, setCriteriaById] = useState({})
@@ -125,6 +306,8 @@ export default function RfpManage() {
   const [closeError, setCloseError] = useState('')
   const [opening, setOpening] = useState(false)
   const [openError, setOpenError] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [msePreference, setMsePreference] = useState(true)
   const [runningL1, setRunningL1] = useState(false)
   const [l1Error, setL1Error] = useState('')
@@ -184,6 +367,26 @@ export default function RfpManage() {
     }
   }
 
+  // Only ever offered when there's nothing in-progress to lose -- no bids
+  // yet, or evaluation already fully concluded (see backend/api/rfp.py's
+  // delete endpoint for why those are the only two safe cases). The server
+  // enforces this regardless; hiding the button otherwise just avoids a
+  // confusing "click delete, get an error" experience.
+  const canDelete = evaluation !== null && (evaluation.bids.length === 0 || bid?.status === 'evaluated')
+
+  async function handleDelete() {
+    if (!window.confirm(`Permanently delete "${bid.title}" and all its data? This cannot be undone.`)) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await deleteRfp(rfpId)
+      navigate('/buyer/rfps')
+    } catch (err) {
+      setDeleteError(err.response?.data?.detail || 'Could not delete this RFP.')
+      setDeleting(false)
+    }
+  }
+
   async function handleOpenFinancialBids() {
     setOpening(true)
     setOpenError('')
@@ -216,14 +419,31 @@ export default function RfpManage() {
       <Nav />
 
       <Container className="flex-1">
-        <div className="flex items-center gap-2 border-b border-line py-4 text-sm text-subtle">
-          <Link to="/buyer/rfps" className="flex items-center gap-1 hover:text-ink">
-            <ChevronLeft size={14} />
-            My RFPs
-          </Link>
-          <ChevronRight size={14} />
-          <span className="font-medium text-ink">{rfpId}</span>
+        <div className="flex items-center justify-between gap-2 border-b border-line py-4 text-sm text-subtle">
+          <div className="flex items-center gap-2">
+            <Link to="/buyer/rfps" className="flex items-center gap-1 hover:text-ink">
+              <ChevronLeft size={14} />
+              My RFPs
+            </Link>
+            <ChevronRight size={14} />
+            <span className="font-medium text-ink">{rfpId}</span>
+          </div>
+          {canDelete && (
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-1.5 text-xs font-medium text-danger hover:underline disabled:opacity-50"
+            >
+              <Trash2 size={13} />
+              {deleting ? 'Deleting...' : 'Delete RFP'}
+            </button>
+          )}
         </div>
+        {deleteError && (
+          <p className="mt-3 rounded-md border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+            {deleteError}
+          </p>
+        )}
 
         <main className="py-10">
           {loadError && (
@@ -247,6 +467,8 @@ export default function RfpManage() {
                   ? `Open for submissions until ${formatDate(bid.closing_date)}`
                   : `Status: ${bid.status}`}
               </p>
+
+              <RfpFlagsPanel rfpId={rfpId} />
 
               {bid.status === 'published' && (
                 <div className="mt-6 rounded-card border border-line bg-elevated p-5">
@@ -321,6 +543,7 @@ export default function RfpManage() {
                             ))}
                           </div>
                         )}
+                        <BidDocumentsPanel rfpId={rfpId} bidId={b.bid_id} />
                       </div>
                     ))}
                   </div>

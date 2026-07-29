@@ -1,0 +1,9 @@
+{
+  "type": "range",
+  "field": "years_of_experience",
+  "tiers": [
+    {"min_value": 10, "max_value": null, "score": 20},
+    {"min_value": 5, "max_value": 9, "score": 12},
+    {"min_value": 0, "max_value": 4, "score": 0}
+  ]
+}

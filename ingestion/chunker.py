@@ -85,17 +85,42 @@ def strip_boilerplate(pages: list[PageText]) -> list[PageText]:
 
 
 def _is_allcaps_heading(line: str) -> bool:
-    """Catches standalone heading lines that aren't numbered, e.g. document
-    section titles like 'ELECTRONIC GAMES' or 'GENERAL TERMS AND DEFINITIONS'
-    — but not incidental all-caps abbreviations sitting inside a normal
-    sentence (checked against the *whole* line's letter ratio, so a line
-    like 'Marked degree of protection to IEC 60529' won't trigger this)."""
+    """Catches standalone heading lines that aren't numbered -- either a
+    multi-word ALL-CAPS document section title (e.g. 'GENERAL TERMS AND
+    DEFINITIONS') or a short Title-Case/single-word section label standing
+    alone on its own line (e.g. 'Disclaimer', 'Warranty') -- not an
+    incidental capitalized word or abbreviation sitting inside a normal
+    sentence. The distinguishing signal isn't case alone, it's that EVERY
+    word on the line looks like a heading word (fully uppercase, or
+    capitalized-first-letter with the rest lowercase): a real sentence
+    fragment almost always contains at least one lowercase-initial word
+    (an article, preposition, verb, ...), e.g. 'Marked degree of protection
+    to IEC 60529' fails on 'degree'/'of'/'protection'/'to' and correctly
+    won't trigger this, the same case this function's single-all-caps-ratio
+    predecessor was built to rule out.
+
+    Found and fixed via a real bug: a bare 'Disclaimer' line (11 letters,
+    one word) preceding this RFP's own standard ATC-incorporation
+    boilerplate wasn't recognized as a heading at all under the old
+    all-caps-only check, so that boilerplate paragraph silently merged into
+    whatever real requirement clause happened to precede it on the page --
+    producing one criterion that was actually two unrelated pieces of text
+    stitched together, which no downstream classifier can correctly judge."""
     stripped = line.strip()
+    if stripped.endswith((";", ",")):
+        return False  # a real heading doesn't end mid-list/mid-sentence -- this is a wrapped continuation line
+    words = stripped.split()
     letters = [c for c in stripped if c.isalpha()]
-    if len(letters) < 6:
+    if len(letters) < 6 or len(words) > 6:
         return False
-    upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
-    return upper_ratio > 0.85 and len(stripped.split()) >= 2
+
+    def _is_heading_word(word: str) -> bool:
+        core = word.strip(":,.-()")
+        if not any(c.isalpha() for c in core):
+            return True  # a bare number/punctuation token doesn't break a heading
+        return core.isupper() or (core[0].isupper() and core[1:].islower())
+
+    return all(_is_heading_word(w) for w in words)
 
 
 def _split_into_sections(pages: list[PageText]) -> list[_Section]:

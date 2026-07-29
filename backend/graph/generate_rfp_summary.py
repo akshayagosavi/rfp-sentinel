@@ -24,8 +24,14 @@ logger = get_logger(__name__)
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("OLLAMA_LLM_MODEL", "llama3.2:3b")
-MAX_RETRIES = 2
+MAX_RETRIES = 3
 _CONNECTION_RETRY_DELAY_SECONDS = 3
+
+# See backend/llm/ollama_client.py's _NUM_CTX for why this must be set
+# explicitly -- Ollama otherwise silently truncates to ~2048 tokens
+# regardless of what the model supports, which risks cutting off the
+# trailing output-format instructions on a large-criteria-list RFP.
+_NUM_CTX = 8192
 
 # Capped, not the full criteria list -- keeps the prompt bounded on a large
 # RFP (real ones have run 20-30+ criteria) and a summary only needs the
@@ -65,7 +71,7 @@ def generate_rfp_summary(structured_rfp: StructuredRFP) -> str:
                     "prompt": prompt,
                     "format": "json",
                     "stream": False,
-                    "options": {"temperature": 0},
+                    "options": {"temperature": 0, "num_ctx": _NUM_CTX},
                 },
                 timeout=150,
             )

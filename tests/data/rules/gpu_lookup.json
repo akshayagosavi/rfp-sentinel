@@ -1,0 +1,6 @@
+{
+  "type": "lookup",
+  "field": "gpu_model",
+  "table": {"h100": 25, "a100": 18},
+  "default_score": 0
+}

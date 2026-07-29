@@ -1,16 +1,18 @@
 """
-M3: extract per-page tables from a PDF using pdfplumber.
+M3: extract per-page tables from a PDF using PyMuPDF's find_tables().
 
 Tables come back as raw row lists here — chunker.py (M5) is responsible for
 serializing them into embeddable text. table_settings is an escape hatch for
-documents whose tables the default detection misses (borderless/whitespace
-tables); pass a per-document override when that happens, not a rewrite.
+documents whose tables the default detection misses; if ever needed, it is
+forwarded as **kwargs to PyMuPDF's Page.find_tables() (e.g.
+{"strategy": "text"}) -- this is PyMuPDF's kwarg shape, not pdfplumber's old
+nested-dict shape. No current caller passes a value.
 """
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import pdfplumber
+import fitz
 
 
 @dataclass
@@ -27,14 +29,15 @@ def extract_tables_by_page(
 ) -> list[PageTable]:
     """page_range (1-indexed, inclusive) -- see extract_text_by_page()."""
     tables = []
-    with pdfplumber.open(pdf_path) as pdf:
-        start, end = page_range if page_range else (1, len(pdf.pages))
-        for page_num, page in enumerate(pdf.pages, start=1):
+    settings = table_settings or {}
+    with fitz.open(pdf_path) as doc:
+        start, end = page_range if page_range else (1, len(doc))
+        for page_num, page in enumerate(doc, start=1):
             if page_num < start or page_num > end:
                 continue
-            found = page.extract_tables(table_settings=table_settings)
-            for idx, rows in enumerate(found):
-                tables.append(PageTable(page_number=page_num, table_index=idx, rows=rows))
+            found = page.find_tables(**settings)
+            for idx, table in enumerate(found.tables):
+                tables.append(PageTable(page_number=page_num, table_index=idx, rows=table.extract()))
     return tables
 
 

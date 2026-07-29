@@ -71,7 +71,7 @@ VERDICT_SCORE = {"pass": 1.0, "partial": 0.5, "fail": 0.0, "not_found": 0.0}
 
 # Eligibility criteria gate Stage 1 (mandatory/binary) but aren't part of
 # the weighted technical_score -- only these categories contribute to it.
-_SCORED_CATEGORIES = {"technical", "financial", "other"}
+SCORED_CATEGORIES = {"technical", "financial", "other"}
 
 
 class Stage1Result(BaseModel):
@@ -101,12 +101,25 @@ def score_stage1(criteria: list[Criterion], evidence: list[EvidenceItem]) -> Sta
     passed = len(failed_criteria) == 0
     blocked_pending_review = passed and len(pending_criteria) > 0
 
-    scored_criteria = [c for c in criteria if c.category in _SCORED_CATEGORIES]
-    weighted_sum = sum(
-        VERDICT_SCORE[evidence_by_criterion[c.id].verdict if c.id in evidence_by_criterion else "not_found"]
-        for c in scored_criteria
-    )
-    technical_score = (weighted_sum / len(scored_criteria) * 100) if scored_criteria else 0.0
+    # Weighted per-criterion contribution: a criterion with a rule_result
+    # (see backend/models/rule.py, backend/scoring/criterion_evaluator.py)
+    # contributes its own real score/max_score, honoring whatever marks the
+    # RFP itself assigned it; a criterion with no rule falls back to today's
+    # implicit equal weight of 1.0 via VERDICT_SCORE, exactly as before rules
+    # existed. When zero criteria have a rule this is algebraically
+    # identical to the old plain average (max_sum == len(scored_criteria)).
+    scored_criteria = [c for c in criteria if c.category in SCORED_CATEGORIES]
+    raw_sum = max_sum = 0.0
+    for c in scored_criteria:
+        e = evidence_by_criterion.get(c.id)
+        if e is not None and e.rule_result is not None:
+            raw_sum += e.rule_result["score"]
+            max_sum += e.rule_result["max_score"]
+        else:
+            verdict = e.verdict if e is not None else "not_found"
+            raw_sum += VERDICT_SCORE[verdict] * 1.0
+            max_sum += 1.0
+    technical_score = (raw_sum / max_sum * 100) if max_sum > 0 else 0.0
 
     return Stage1Result(
         bid_id=bid_id,
@@ -219,10 +232,16 @@ def score_stage2(
     bids: list[BidInput],
     price_band_percent: float | None = None,
     mse_share_percent: float | None = None,
+    mii_restricted: bool = True,
 ) -> Stage2Result:
-    """MII filter always runs first (excludes non-local suppliers before
-    anything else), then price ranking, then the MSE price-match. L1
-    only -- see module docstring for why QCBS isn't included in this build.
+    """MII filter runs first (excludes non-local suppliers before anything
+    else) UNLESS mii_restricted is False -- that flag is this RFP's own
+    mii_restricted field (StructuredRFP), true unless this specific RFP's
+    ATC text is confirmed not to require Class-I/II-local-only bidding.
+    Defaults to True here too so any existing caller that doesn't pass it
+    keeps today's behavior unchanged. Then price ranking, then the MSE
+    price-match. L1 only -- see module docstring for why QCBS isn't
+    included in this build.
 
     If L1 is a tie, mse_price_match is only computed automatically when
     every tied bidder shares the same MSE status (the answer is
@@ -230,7 +249,7 @@ def score_stage2(
     tied bidders MSE, some not) leaves mse_price_match unset until the
     buyer resolves the tie via run_l1_selection() -- MSE price-matching
     can't be determined without knowing which single bidder is actually L1."""
-    mii_filtered = [b for b in bids if b.is_mii_local]
+    mii_filtered = [b for b in bids if b.is_mii_local] if mii_restricted else list(bids)
     ranked = sorted(mii_filtered, key=lambda b: b.price)
 
     result = Stage2Result(ranking=[{"bid_id": b.bid_id, "price": b.price} for b in ranked])
@@ -274,6 +293,7 @@ def score_stage2_qcbs(
     technical_scores: dict[str, float],
     technical_weight: float = _DEFAULT_QCBS_TECHNICAL_WEIGHT,
     price_weight: float = _DEFAULT_QCBS_PRICE_WEIGHT,
+    mii_restricted: bool = True,
 ) -> QcbsResult:
     """QCBS: unlike L1, a bid's technical_score (from score_stage1) keeps
     mattering after the Stage 1 gate -- it's blended with a price_score
@@ -282,8 +302,12 @@ def score_stage2_qcbs(
     technical_scores maps bid_id -> the technical_score already computed
     by score_stage1 -- this function doesn't recompute it, just consumes
     it, same "one calculation, two consumers" relationship described in
-    this module's docstring."""
-    mii_filtered = [b for b in bids if b.is_mii_local]
+    this module's docstring.
+
+    mii_restricted mirrors score_stage2()'s parameter of the same name --
+    True (default, unchanged existing behavior) excludes non-local bidders
+    entirely; False includes everyone, ranked purely on technical/price."""
+    mii_filtered = [b for b in bids if b.is_mii_local] if mii_restricted else list(bids)
     if not mii_filtered:
         return QcbsResult(ranking=[], technical_weight=technical_weight, price_weight=price_weight)
 

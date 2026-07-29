@@ -3,6 +3,33 @@ import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { CheckCircle2, AlertTriangle, XCircle, Loader2 } from 'lucide-react'
 
+const CLAUSE_PREVIEW_LENGTH = 220
+
+// Extracted RFP clauses are copied verbatim and can run to a full paragraph
+// -- collapsed by default so the actual flag/reasoning below it isn't buried
+// under a wall of source text, expandable for whoever wants the full clause.
+function ClauseText({ text }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = text.length > CLAUSE_PREVIEW_LENGTH
+
+  return (
+    <div>
+      <p className="text-sm font-medium text-ink">
+        {expanded || !isLong ? text : `${text.slice(0, CLAUSE_PREVIEW_LENGTH).trimEnd()}…`}
+      </p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-xs font-medium text-accent hover:underline"
+        >
+          {expanded ? 'Show less' : 'Show full clause'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function EvaluationResult({
   phase,
   rfpId,
@@ -118,7 +145,7 @@ export default function EvaluationResult({
         <ul className="mt-4 space-y-3">
           {flaggedCriteria.map((c) => (
             <li key={c.id} className="rounded-md border border-danger-line bg-elevated px-4 py-3">
-              <p className="text-sm font-medium text-ink">{c.text}</p>
+              <ClauseText text={c.text} />
               {c.compliance_issue && (
                 <div className="mt-2">
                   <span className="text-xs font-medium uppercase tracking-wide text-subtle">

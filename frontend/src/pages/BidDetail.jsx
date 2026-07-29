@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Flag,
   FileCheck2,
   FileText,
   Info,
@@ -12,7 +13,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
-import { bidDocumentUrl, getBidDetail, getLegitimacyCheck, getRfpSummary } from '../api/client'
+import { bidDocumentUrl, flagRfp, getBidDetail, getLegitimacyCheck, getRfpSummary } from '../api/client'
 import Nav from '../components/Nav'
 import Container from '../components/Container'
 import Footer from '../components/Footer'
@@ -104,6 +105,86 @@ function RfpSummary({ rfpId }) {
         >
           {loading && <Loader2 size={12} className="animate-spin" />}
           {loading ? 'Generating (can take up to 30s)...' : 'Generate summary'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// Lets a signed-in bidder raise a pre-bid query/concern about this tender
+// -- previously there was no way to do this at all. Only meaningful while
+// the RFP is still published (enforced server-side too, see
+// backend/api/bidder.py's flag_rfp()) -- there's nothing left for the
+// buyer to act on once bidding has closed.
+function FlagRfpForm({ rfpId, canFlag }) {
+  const { isAuthenticated, role } = useAuth()
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [message, setMessage] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+  const [error, setError] = useState('')
+
+  if (!canFlag) return null
+
+  function handleOpen() {
+    if (!isAuthenticated) {
+      navigate('/bidder/login')
+      return
+    }
+    if (role !== 'bidder') return
+    setOpen(true)
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!message.trim()) return
+    setSubmitting(true)
+    setError('')
+    try {
+      await flagRfp(rfpId, message.trim())
+      setSubmitted(true)
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Could not submit your flag right now.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="rounded-card border border-line bg-elevated p-4">
+      <div className="flex items-center gap-2">
+        <Flag size={15} className="shrink-0 text-accent" />
+        <p className="text-sm font-medium text-ink">Flag an issue with this tender</p>
+      </div>
+
+      {submitted ? (
+        <p className="mt-2 text-sm text-success">Thanks — the buyer can now see your note on this tender.</p>
+      ) : open ? (
+        <form onSubmit={handleSubmit} className="mt-2">
+          <textarea
+            required
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Describe what looks wrong or unclear..."
+            rows={3}
+            className="w-full rounded-md border border-line bg-canvas px-3 py-2 text-sm text-ink transition-colors duration-200 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+          />
+          {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+          <button
+            type="submit"
+            disabled={submitting}
+            className="mt-2 rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition-colors duration-200 hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? 'Submitting...' : 'Submit'}
+          </button>
+        </form>
+      ) : (
+        <button
+          onClick={handleOpen}
+          className="mt-2 rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition-colors duration-200 hover:border-accent/40"
+        >
+          Raise a query
         </button>
       )}
     </div>
@@ -260,6 +341,7 @@ export default function BidDetail() {
                 <div className="space-y-4">
                   <RfpSummary rfpId={rfpId} />
                   <LegitimacyCheck rfpId={rfpId} />
+                  <FlagRfpForm rfpId={rfpId} canFlag={bid.status === 'published'} />
                 </div>
               </div>
             </>
